@@ -8021,115 +8021,69 @@ const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploa
         };
     }, []);
 
-   const startLive = async () => {
+   // INÍCIO DA FUNÇÃO DE TRANSMISSÃO VERCEL ONLY
+    const startLive = async () => {
         try {
-            // 👇 TRAVA ANTI-TELA VERMELHA (Super blindada)
-            const suportaCamera = navigator && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
-            
-            if (!suportaCamera) {
-                showNotification("⚠️ Câmera Bloqueada! O celular exige que o painel esteja online (HTTPS).", "error");
-                setIsLiveStreaming(false);
-                return; // 🛑 Para a execução do código aqui para não quebrar o site!
-            }
+            // 👇 COLE O LINK DO SEU BACKEND DA VERCEL AQUI 👇
+            const URL_HTTP_VERCEL = 'https://backend-live-eta.vercel.app/';
 
-            // ==============================================================================
-            // INÍCIO DA OTIMIZAÇÃO DO ENCODER (LOW LATENCY)
-            // Forçamos resolução HD e cravamos em 30fps para evitar atrasos de renderização
-            // ==============================================================================
+            // Pega a câmera e o microfone (resolução menor para a Vercel aguentar o tranco)
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { 
-                    width: { ideal: 1280, max: 1280 },
-                    height: { ideal: 720, max: 720 },
-                    frameRate: { ideal: 30, max: 30 } 
-                }, 
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true
-                } 
+                video: { width: { ideal: 640 }, height: { ideal: 360 } }, 
+                audio: true 
             });
-            streamRef.current = stream;
 
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
+                videoRef.current.muted = true; // Impede eco no seu painel
             }
 
-            const currentLiveId = `live_${Date.now()}`;
-            setLiveSessionId(currentLiveId);
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            
+            // Pega a imagem da câmera e envia para a Vercel a cada 1 segundo
+            httpBackupInterval.current = setInterval(async () => {
+                if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+                    canvas.width = videoRef.current.videoWidth;
+                    canvas.height = videoRef.current.videoHeight;
+                    context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                    
+                    // Compacta a imagem (qualidade 0.5 = 50%) para a Vercel receber super rápido
+                    const base64Image = canvas.toDataURL('image/jpeg', 0.5); 
 
-            // Otimização de Bitrate: Cravamos em 1.5 Mbps (1500000 bits) para garantir 
-            // que o upload do arquivo para o Cloudflare R2 seja mais rápido do que o tempo de gravação
-            const mediaRecorder = new MediaRecorder(stream, { 
-                mimeType: 'video/webm; codecs=vp8,opus',
-                videoBitsPerSecond: 1500000 
-            });
-            mediaRecorderRef.current = mediaRecorder;
-
-            // --- NOVO CÓDIGO: TRANSMISSÃO VIA WEBSOCKET ZERO DELAY (STUDIO 3K) ---
-            const liveSocket = new window.WebSocket('https://backend-live-ppxm.onrender.com');
-
-            liveSocket.onopen = () => console.log("Meus cursos: Admin conectado ao servidor de Live!");
-            liveSocket.onerror = (e) => console.error("Erro no servidor da Live", e);
-
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data && event.data.size > 0) {
-                    // Envia o fluxo de vídeo diretamente pelo "tubo" do WebSocket
-                    if (liveSocket.readyState === window.WebSocket.OPEN) {
-                        liveSocket.send(event.data);
+                    try {
+                        await fetch(URL_HTTP_VERCEL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ image: base64Image })
+                        });
+                    } catch(e) {
+                        console.warn("Falha no envio do frame, tentando o próximo...", e);
                     }
                 }
-            };
-            // ---------------------------------------------------------------------
+            }, 1000); // Envia 1 foto por segundo
 
-            // ==============================================================================
-            // O SEGREDO DO LOW LATENCY NA SUA ESTRUTURA
-            // Ao invés de fatiar de 1000 em 1000 (1 segundo), baixamos para 800ms.
-            // O R2 e o Firebase recebem blocos mais leves e o player do aluno lê instantaneamente.
-            // ==============================================================================
-            mediaRecorder.start(1000); 
-            setIsLiveStreaming(true);
-
-            updateGenSetting('liveActive', true);
-            showNotification("Transmissão Iniciada! Conectando com os alunos em Low Latency...", "success");
+            setIsLive(true);
+            showNotification("Transmissão iniciada e conectada à Vercel!", "success");
 
         } catch (error) {
-            console.error("Erro ao acessar câmera:", error);
-            setIsLiveStreaming(false); // Destrava o botão
-            
-            if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-                showNotification("Permissão negada! Você clicou em 'Bloquear' ou o navegador barrou a câmera.", "error");
-            } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-                showNotification("Nenhuma câmera ou microfone foi encontrado.", "error");
-            } else {
-                showNotification("Erro na câmera. Tente por um link seguro (HTTPS).", "error");
-            }
+            console.error("Erro ao iniciar live:", error);
+            showNotification("Erro ao acessar câmera ou microfone.", "error");
         }
     };
 
-    const stopLive = async () => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop();
-        }
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-        }
-        if (videoRef.current) {
+    const stopLive = () => {
+        if (httpBackupInterval.current) clearInterval(httpBackupInterval.current);
+        
+        if (videoRef.current && videoRef.current.srcObject) {
+            videoRef.current.srcObject.getTracks().forEach(track => track.stop());
             videoRef.current.srcObject = null;
         }
-
-        setIsLiveStreaming(false);
-        updateGenSetting('liveActive', false);
         
-        try {
-            const { doc, updateDoc } = await import('firebase/firestore');
-            await updateDoc(doc(db, "config", "general_settings"), { 
-                liveActive: false,
-                currentLiveId: null,
-                initChunkUrl: null 
-            }, { merge: true });
-        } catch (e) {}
-
-        showNotification("Transmissão Encerrada com sucesso.", "info");
+        setIsLive(false);
+        showNotification("Transmissão encerrada.", "info");
     };
+    // FIM DAS FUNÇÕES DE TRANSMISSÃO
 
     return (
         <div className="space-y-6 animate-fade-in pb-20 relative">
