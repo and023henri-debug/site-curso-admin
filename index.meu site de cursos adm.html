@@ -8065,9 +8065,9 @@ const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploa
             mediaRecorderRef.current = mediaRecorder;
 
             // --- NOVO CÓDIGO: TRANSMISSÃO VIA WEBSOCKET ZERO DELAY (STUDIO 3K) ---
-            const liveSocket = new window.WebSocket('wss://seu-backend-live.up.railway.app');
+            const liveSocket = new window.WebSocket('https://backend-live-ppxm.onrender.com');
 
-            liveSocket.onopen = () => console.log("Studio 3K: Admin conectado ao servidor de Live!");
+            liveSocket.onopen = () => console.log("Meus cursos: Admin conectado ao servidor de Live!");
             liveSocket.onerror = (e) => console.error("Erro no servidor da Live", e);
 
             mediaRecorder.ondataavailable = (event) => {
