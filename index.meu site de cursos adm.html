@@ -8002,54 +8002,47 @@ const AdminLevelsTab = ({ db, theme, Icons, showNotification, requestConfirmatio
 
 
 // =================================================================================
-// COMPONENTE ADMIN: TRANSMISSÃO AO VIVO (WEBRTC CHUNKS) - CORRIGIDO
+// COMPONENTE ADMIN: TRANSMISSÃO AO VIVO (VERCEL ONLY)
 // =================================================================================
 const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploadToCustomDrive, showNotification }) => {
     const videoRef = React.useRef(null);
-    const mediaRecorderRef = React.useRef(null);
-    const streamRef = React.useRef(null);
-    const uploadQueue = React.useRef(Promise.resolve()); 
-    
+    const httpBackupInterval = React.useRef(null);
     const [isLiveStreaming, setIsLiveStreaming] = React.useState(false);
-    const [liveSessionId, setLiveSessionId] = React.useState('');
 
     React.useEffect(() => {
         return () => {
-            if (streamRef.current) {
-                streamRef.current.getTracks().forEach(track => track.stop());
+            if (videoRef.current && videoRef.current.srcObject) {
+                videoRef.current.srcObject.getTracks().forEach(track => track.stop());
             }
+            if (httpBackupInterval.current) clearInterval(httpBackupInterval.current);
         };
     }, []);
 
-   // INÍCIO DA FUNÇÃO DE TRANSMISSÃO VERCEL ONLY
     const startLive = async () => {
         try {
-            // 👇 COLE O LINK DO SEU BACKEND DA VERCEL AQUI 👇
-            const URL_HTTP_VERCEL = 'https://backend-live-eta.vercel.app/';
+            // 👇 NÃO ESQUEÇA DE COLOCAR O LINK REAL DA SUA VERCEL AQUI 👇
+            const URL_HTTP_VERCEL = 'https://SEU-PROJETO.vercel.app/upload-frame';
 
-            // Pega a câmera e o microfone (resolução menor para a Vercel aguentar o tranco)
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { width: { ideal: 640 }, height: { ideal: 360 } }, 
-                audio: true 
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 640 }, height: { ideal: 360 } },
+                audio: true
             });
 
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
-                videoRef.current.muted = true; // Impede eco no seu painel
+                videoRef.current.muted = true;
             }
 
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
-            
-            // Pega a imagem da câmera e envia para a Vercel a cada 1 segundo
+
             httpBackupInterval.current = setInterval(async () => {
                 if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
                     canvas.width = videoRef.current.videoWidth;
                     canvas.height = videoRef.current.videoHeight;
                     context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-                    
-                    // Compacta a imagem (qualidade 0.5 = 50%) para a Vercel receber super rápido
-                    const base64Image = canvas.toDataURL('image/jpeg', 0.5); 
+
+                    const base64Image = canvas.toDataURL('image/jpeg', 0.5);
 
                     try {
                         await fetch(URL_HTTP_VERCEL, {
@@ -8058,13 +8051,13 @@ const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploa
                             body: JSON.stringify({ image: base64Image })
                         });
                     } catch(e) {
-                        console.warn("Falha no envio do frame, tentando o próximo...", e);
+                        console.warn("Aguardando Vercel...");
                     }
                 }
-            }, 1000); // Envia 1 foto por segundo
+            }, 1000);
 
-            setIsLive(true);
-            showNotification("Transmissão iniciada e conectada à Vercel!", "success");
+            setIsLiveStreaming(true); 
+            showNotification("Transmissão iniciada na Vercel!", "success");
 
         } catch (error) {
             console.error("Erro ao iniciar live:", error);
@@ -8074,16 +8067,15 @@ const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploa
 
     const stopLive = () => {
         if (httpBackupInterval.current) clearInterval(httpBackupInterval.current);
-        
+
         if (videoRef.current && videoRef.current.srcObject) {
             videoRef.current.srcObject.getTracks().forEach(track => track.stop());
             videoRef.current.srcObject = null;
         }
-        
-        setIsLive(false);
+
+        setIsLiveStreaming(false); 
         showNotification("Transmissão encerrada.", "info");
     };
-    // FIM DAS FUNÇÕES DE TRANSMISSÃO
 
     return (
         <div className="space-y-6 animate-fade-in pb-20 relative">
@@ -8092,14 +8084,14 @@ const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploa
                     <h2 className={`text-2xl font-bold ${theme.text} flex items-center gap-2`}>
                         <Icons.Video className="w-6 h-6 text-red-500" /> Transmissão ao Vivo
                     </h2>
-                    <p className={`text-sm ${theme.textSec} mt-1`}>Câmera capturada e enviada em tempo real para os alunos.</p>
+                    <p className={`text-sm ${theme.textSec} mt-1`}>Câmera capturada e enviada em tempo real para os alunos via Vercel.</p>
                 </div>
                 <div className="flex items-center gap-4">
                     <span className={`px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 border ${isLiveStreaming ? 'bg-red-500/10 text-red-500 border-red-500/30 animate-pulse' : 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:border-slate-700'}`}>
                         <div className={`w-2.5 h-2.5 rounded-full ${isLiveStreaming ? 'bg-red-500' : 'bg-slate-400'}`}></div>
                         {isLiveStreaming ? 'NO AR (GRAVANDO)' : 'OFFLINE'}
                     </span>
-                    <button 
+                    <button
                         onClick={isLiveStreaming ? stopLive : startLive}
                         className={`px-6 py-2.5 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95 flex items-center gap-2 ${isLiveStreaming ? 'bg-slate-800 hover:bg-slate-700' : 'bg-red-600 hover:bg-red-700'}`}
                     >
@@ -8124,11 +8116,11 @@ const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploa
                     <div className={`${theme.card} p-6 rounded-2xl border shadow-sm space-y-4`}>
                         <div>
                             <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${theme.textSec}`}>Título da Live</label>
-                            <input 
-                                type="text" 
-                                value={draftSettings.liveTitle || ''} 
-                                onChange={(e) => updateGenSetting('liveTitle', e.target.value)} 
-                                className={`w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 ${theme.input} font-bold`} 
+                            <input
+                                type="text"
+                                value={draftSettings.liveTitle || ''}
+                                onChange={(e) => updateGenSetting('liveTitle', e.target.value)}
+                                className={`w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 ${theme.input} font-bold`}
                                 placeholder="Ex: Mentoria Especial #01"
                             />
                         </div>
@@ -8142,7 +8134,7 @@ const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploa
                         </h3>
                         <div className="flex items-center justify-between mb-4">
                             <span className={`text-sm font-bold ${theme.text}`}>Chat da Live</span>
-                            <button 
+                            <button
                                 onClick={() => updateGenSetting('liveChatActive', !draftSettings.liveChatActive)}
                                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${draftSettings.liveChatActive ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'}`}
                             >
