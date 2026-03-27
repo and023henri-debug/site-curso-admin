@@ -8064,41 +8064,21 @@ const AdminLiveTab = ({ db, theme, Icons, draftSettings, updateGenSetting, uploa
             });
             mediaRecorderRef.current = mediaRecorder;
 
-            let isFirstChunk = true;
+            // --- NOVO CÓDIGO: TRANSMISSÃO VIA WEBSOCKET ZERO DELAY (STUDIO 3K) ---
+            const liveSocket = new window.WebSocket('wss://seu-backend-live.up.railway.app');
 
-            mediaRecorder.ondataavailable = async (event) => {
+            liveSocket.onopen = () => console.log("Studio 3K: Admin conectado ao servidor de Live!");
+            liveSocket.onerror = (e) => console.error("Erro no servidor da Live", e);
+
+            mediaRecorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
-                    const chunkBlob = event.data;
-                    const chunkFile = new File([chunkBlob], `chunk_${Date.now()}.webm`, { type: 'video/webm' });
-
-                    uploadQueue.current = uploadQueue.current.then(async () => {
-                        try {
-                            const data = await uploadToCustomDrive(chunkFile, `LiveStreams/${currentLiveId}/`);
-                            if (data && data.url) {
-                                const { collection, addDoc, doc, updateDoc, serverTimestamp } = await import('firebase/firestore');
-                                
-                                if (isFirstChunk) {
-                                    isFirstChunk = false;
-                                    await updateDoc(doc(db, "config", "general_settings"), { 
-                                        liveActive: true, 
-                                        currentLiveId: currentLiveId, 
-                                        initChunkUrl: data.url        
-                                    }, { merge: true });
-                                }
-
-                                await addDoc(collection(db, "live_chunks"), {
-                                    liveId: currentLiveId,
-                                    url: data.url,
-                                    timestamp: Date.now(),
-                                    createdAt: serverTimestamp()
-                                });
-                            }
-                        } catch (err) {
-                            console.error("Erro ao fazer upload do chunk:", err);
-                        }
-                    });
+                    // Envia o fluxo de vídeo diretamente pelo "tubo" do WebSocket
+                    if (liveSocket.readyState === window.WebSocket.OPEN) {
+                        liveSocket.send(event.data);
+                    }
                 }
             };
+            // ---------------------------------------------------------------------
 
             // ==============================================================================
             // O SEGREDO DO LOW LATENCY NA SUA ESTRUTURA
