@@ -595,6 +595,56 @@ if(_isIos && !_isStandalone){
     setTimeout(()=>document.body.appendChild(ib),2000);
 }
 </script>
+
+
+
+<script>
+        // Executa apenas após a página carregar, evitando a "tela branca"
+        window.addEventListener('DOMContentLoaded', (event) => {
+            
+            // 1. Bloqueia o botão direito (Menu de Contexto)
+            document.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+            });
+
+            // 2. Bloqueia atalhos F12, Inspecionar, Ver Código Fonte e Salvar
+            document.addEventListener('keydown', function(e) {
+                // F12
+                if (e.key === 'F12' || e.keyCode === 123) {
+                    e.preventDefault();
+                }
+                // Ctrl + Shift + I / J / C (Windows/Linux)
+                if (e.ctrlKey && e.shiftKey && ['I', 'J', 'C', 'i', 'j', 'c'].includes(e.key)) {
+                    e.preventDefault();
+                }
+                // Ctrl + U (Ver código fonte) / Ctrl + S (Salvar)
+                if (e.ctrlKey && ['U', 'S', 'u', 's'].includes(e.key)) {
+                    e.preventDefault();
+                }
+                // Cmd + Option + I / J / U (Mac)
+                if (e.metaKey && e.altKey && ['I', 'J', 'U', 'i', 'j', 'u'].includes(e.key)) {
+                    e.preventDefault();
+                }
+            });
+
+            // 3. Oculta o corpo da página se a impressão (Ctrl+P) for acionada para salvar em PDF
+            window.addEventListener('beforeprint', () => {
+                document.body.style.display = 'none';
+            });
+            window.addEventListener('afterprint', () => {
+                document.body.style.display = '';
+            });
+            
+            // 4. Limpa o console constantemente para evitar injeção de scripts
+            setInterval(() => {
+                console.clear();
+                console.log("%c⛔ ACESSO RESTRITO", "color: red; font-size: 24px; font-weight: bold; text-shadow: 1px 1px 0px black;");
+            }, 1000);
+        });
+    </script>
+    </head>
+
+
 </head>
 
 <body class="bg-slate-50 text-slate-800 dark:bg-slate-900 dark:text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
@@ -1581,7 +1631,7 @@ const getMediaType = (url) => {
 
    
 
-// --- VERSÃO ATUALIZADA: LIBERAÇÃO E CANCELAMENTO DE ACESSO ---
+// --- VERSÃO ATUALIZADA: LIBERAÇÃO E CANCELAMENTO DE ACESSO (BLOQUEIO TOTAL) ---
 const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, showNotification }) => {
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedStudent, setSelectedStudent] = useState(null);
@@ -1597,7 +1647,6 @@ const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, show
         return s.nome || s.name || s.displayName || s.fullName || s.username || 'Aluno Sem Nome';
     };
 
-    // 👇 CORREÇÃO PRINCIPAL: Agora retorna 'true' quando a busca está vazia para mostrar os alunos
     const filteredStudents = safeStudents.filter(s => {
         if (!searchTerm) return true; 
         const term = searchTerm.toLowerCase().trim();
@@ -1673,52 +1722,55 @@ const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, show
         const studentName = getStudentName(selectedStudent);
 
         requestConfirmation(
-            "🚫 Cancelar Liberação",
-            `Tem certeza que deseja REMOVER o acesso de ${studentName} ao curso "${curso?.title}"?\n\nIsso irá cancelar qualquer liberação anterior.`,
+            "🚫 Bloquear Acesso ao Curso",
+            `Tem certeza que deseja REMOVER o acesso de ${studentName} ao curso "${curso?.title}"?\n\nMesmo que ele tenha comprado, o curso voltará a aparecer bloqueado na área do aluno pedindo para comprar novamente.`,
             async () => {
                 setLoadingRevoke(true);
                 try {
+                    // 👇 A MÁGICA ESTÁ AQUI: Procura por QUALQUER status positivo que dê acesso
                     const q = query(
                         collection(db, "transactions"),
                         where("userId", "==", selectedStudent.id),
                         where("courseId", "==", selectedCourseId),
-                        where("status", "==", "aprovado")
+                        where("status", "in", ["aprovado", "pago", "approved", "concluido", "concluído"])
                     );
                     
                     const querySnapshot = await getDocs(q);
 
                     if (querySnapshot.empty) {
-                        showNotification("⚠️ Este aluno não possui acesso ativo neste curso para cancelar.", "warning");
+                        showNotification("⚠️ Este aluno já não possui acesso ativo a este curso.", "warning");
                         setLoadingRevoke(false);
                         return;
                     }
 
+                    // Se achar a transação (seja compra ou presente), transforma em cancelado
                     const updates = querySnapshot.docs.map(docSnap => 
                         updateDoc(doc(db, "transactions", docSnap.id), {
                             status: 'cancelado',
                             updatedAt: serverTimestamp(),
-                            obs: 'Cancelado manualmente pelo Admin'
+                            obs: 'Acesso revogado/bloqueado manualmente pelo Admin'
                         })
                     );
                     
                     await Promise.all(updates);
 
+                    // Cria o log para segurança
                     await addDoc(collection(db, "audit_logs"), {
-                        action: "CANCELAMENTO MANUAL",
+                        action: "BLOQUEIO DE CURSO",
                         details: `Removeu acesso do curso "${curso.title}" para ${selectedStudent.email}`,
                         actorName: "Admin",
                         timestamp: serverTimestamp()
                     });
 
-                    showNotification("🚫 Acesso revogado com sucesso.", "success");
+                    showNotification("🚫 Acesso bloqueado com sucesso.", "success");
                     
                     setSelectedStudent(null);
                     setSearchTerm("");
                     setSelectedCourseId("");
 
                 } catch (error) {
-                    console.error("Erro ao cancelar:", error);
-                    showNotification("Erro ao cancelar acesso.", "error");
+                    console.error("Erro ao bloquear:", error);
+                    showNotification("Erro ao bloquear acesso.", "error");
                 } finally {
                     setLoadingRevoke(false);
                 }
@@ -1733,7 +1785,7 @@ const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, show
                     <Icons.Unlock className="text-green-500" /> Gerenciar Acessos Manuais
                 </h2>
                 <p className={`text-sm ${theme.textSec} mt-1`}>
-                    Libere ou cancele o acesso de alunos a cursos específicos.
+                    Libere cursos de presente ou bloqueie o acesso de alunos a cursos específicos.
                 </p>
             </div>
 
@@ -1761,7 +1813,7 @@ const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, show
                         <>
                             <div className="relative mb-4">
                                 <Icons.Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-                                <input type="text" placeholder="Pesquisar..." className={`w-full pl-10 pr-10 py-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500 ${theme.input}`} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} autoFocus />
+                                <input type="text" placeholder="Pesquisar por nome ou e-mail..." className={`w-full pl-10 pr-10 py-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-500 ${theme.input}`} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} autoFocus />
                                 {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><Icons.X className="w-4 h-4" /></button>}
                             </div>
                             <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
@@ -1790,7 +1842,7 @@ const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, show
                     </h3>
                     <div className="flex-1 space-y-4">
                         <div>
-                            <label className={`block text-sm font-medium mb-2 ${theme.textSec}`}>Selecione o Curso</label>
+                            <label className={`block text-sm font-medium mb-2 ${theme.textSec}`}>Selecione o Curso Alvo</label>
                             <select value={selectedCourseId} onChange={(e) => setSelectedCourseId(e.target.value)} className={`w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 ${theme.input}`} disabled={!selectedStudent}>
                                 <option value="">-- Selecione --</option>
                                 {safeCourses.map(course => (
@@ -1806,8 +1858,8 @@ const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, show
                             disabled={!selectedStudent || !selectedCourseId || loading || loadingRevoke} 
                             className={`flex-1 py-4 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-all shadow-lg ${!selectedStudent || !selectedCourseId ? 'bg-slate-300 cursor-not-allowed dark:bg-slate-700 shadow-none' : 'bg-red-600 hover:bg-red-700 hover:scale-[1.02] shadow-red-600/30'}`}
                         >
-                            {loadingRevoke ? <Icons.Loading className="animate-spin w-5 h-5"/> : <Icons.Trash2 className="w-5 h-5"/>}
-                            {loadingRevoke ? 'Cancelando...' : 'CANCELAR'}
+                            {loadingRevoke ? <Icons.Loading className="animate-spin w-5 h-5"/> : <Icons.Lock className="w-5 h-5"/>}
+                            {loadingRevoke ? 'Bloqueando...' : 'BLOQUEAR'}
                         </button>
 
                         <button 
@@ -1815,16 +1867,19 @@ const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, show
                             disabled={!selectedStudent || !selectedCourseId || loading || loadingRevoke} 
                             className={`flex-1 py-4 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-all shadow-lg ${!selectedStudent || !selectedCourseId ? 'bg-slate-300 cursor-not-allowed dark:bg-slate-700 shadow-none' : 'bg-green-600 hover:bg-green-700 hover:scale-[1.02] shadow-green-600/30'}`}
                         >
-                            {loading ? <Icons.Loading className="animate-spin w-5 h-5"/> : <Icons.CheckCircle className="w-5 h-5"/>}
+                            {loading ? <Icons.Loading className="animate-spin w-5 h-5"/> : <Icons.Unlock className="w-5 h-5"/>}
                             {loading ? 'Liberando...' : 'LIBERAR'}
                         </button>
                     </div>
+                    <p className="text-[10px] text-center mt-3 text-slate-500 dark:text-slate-400">
+                        O botão "Bloquear" força o aluno a perder o acesso, fazendo o curso voltar para a área de compras dele.
+                    </p>
                 </div>
             </div>
         </div>
     );
 };
-// ================================================================================= 
+// =================================================================================
 
 
 
@@ -3922,14 +3977,12 @@ const AdminNotificationsTab = ({ db, theme, showNotification, requestConfirmatio
     const [isLoading, setIsLoading] = React.useState(true);
     const [isSaving, setIsSaving] = React.useState(false);
     
-    // Estado do Formulário
     const [formData, setFormData] = React.useState({
         titulo: '',
         mensagem: '',
-        tipo: 'info' // info, success, warning, error
+        tipo: 'info' 
     });
 
-    // Buscar notificações no banco de dados em tempo real
     React.useEffect(() => {
         if (!db) return;
         const q = query(collection(db, "notifications"), orderBy("createdAt", "desc"));
@@ -3941,7 +3994,6 @@ const AdminNotificationsTab = ({ db, theme, showNotification, requestConfirmatio
         return () => unsubscribe();
     }, [db]);
 
-    // Salvar nova notificação
     const handleSendNotification = async (e) => {
         e.preventDefault();
         if (!formData.titulo || !formData.mensagem) {
@@ -3952,11 +4004,11 @@ const AdminNotificationsTab = ({ db, theme, showNotification, requestConfirmatio
         try {
             await addDoc(collection(db, "notifications"), {
                 ...formData,
-                lidaPor: [], // Array para controlar quais alunos já leram (futuro)
+                lidaPor: [], 
                 createdAt: serverTimestamp()
             });
             showNotification("Notificação enviada com sucesso!", "success");
-            setFormData({ titulo: '', mensagem: '', tipo: 'info' }); // Limpa o form
+            setFormData({ titulo: '', mensagem: '', tipo: 'info' }); 
         } catch (error) {
             console.error("Erro ao enviar notificação:", error);
             showNotification("Erro ao enviar notificação.", "error");
@@ -3965,7 +4017,6 @@ const AdminNotificationsTab = ({ db, theme, showNotification, requestConfirmatio
         }
     };
 
-    // Excluir notificação
     const handleDelete = (id) => {
         requestConfirmation(
             "Excluir Notificação", 
@@ -4000,7 +4051,6 @@ const AdminNotificationsTab = ({ db, theme, showNotification, requestConfirmatio
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* LADO ESQUERDO: FORMULÁRIO */}
                 <div className="lg:col-span-1">
                     <div className={`${theme.card} p-6 rounded-2xl shadow-sm border`}>
                         <h3 className={`font-bold text-lg mb-4 ${theme.text}`}>Nova Notificação</h3>
@@ -4055,24 +4105,23 @@ const AdminNotificationsTab = ({ db, theme, showNotification, requestConfirmatio
                     </div>
                 </div>
 
-                {/* LADO DIREITO: LISTA DE NOTIFICAÇÕES */}
                 <div className="lg:col-span-2">
                     <div className={`${theme.card} p-6 rounded-2xl shadow-sm border h-full`}>
                         <h3 className={`font-bold text-lg mb-4 ${theme.text} flex justify-between items-center`}>
                             Histórico de Avisos
-                            <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded-full">{notifications.length} enviados</span>
+                            <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded-full">{(notifications || []).length} enviados</span>
                         </h3>
                         
                         <div className="space-y-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
                             {isLoading ? (
                                 <div className="py-10 flex justify-center"><Icons.Loading className="w-8 h-8 text-indigo-500 animate-spin" /></div>
-                            ) : notifications.length === 0 ? (
+                            ) : (notifications || []).length === 0 ? (
                                 <div className="text-center py-12 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl">
                                     <Icons.Bell className="w-12 h-12 text-slate-300 mx-auto mb-3" />
                                     <p className={`text-slate-500 font-medium`}>Nenhuma notificação enviada.</p>
                                 </div>
                             ) : (
-                                notifications.map(notif => (
+                                (notifications || []).map(notif => (
                                     <div key={notif.id} className="p-4 rounded-xl border border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors flex gap-4 group">
                                         <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${getIconColor(notif.tipo)}`}>
                                             <Icons.Bell className="w-5 h-5" />
@@ -4106,7 +4155,7 @@ const AdminNotificationsTab = ({ db, theme, showNotification, requestConfirmatio
 // =================================================================================
 // COMPONENTE NOVO: CENTRAL DE NOTIFICAÇÕES (COM PREVIEW INTERNO E EDIÇÃO)
 // =================================================================================
-const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, uploadToCustomDrive, requestConfirmation }) => {
+const AdminNotificationCenter = ({ db, alunos, theme, showNotification, uploadToCustomDrive, requestConfirmation, Icons }) => {
     const [title, setTitle] = React.useState('');
     const [message, setMessage] = React.useState('');
     const [type, setType] = React.useState('info'); 
@@ -4114,7 +4163,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
     const [searchTerm, setSearchTerm] = React.useState('');
     const [selectedUser, setSelectedUser] = React.useState(null);
     
-    // ARRAY para suportar múltiplos arquivos
     const [attachments, setAttachments] = React.useState([]); 
     const [isUploadingFile, setIsUploadingFile] = React.useState(false);
     const [uploadProgress, setUploadProgress] = React.useState(0);
@@ -4122,11 +4170,9 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
     const [isSending, setIsSending] = React.useState(false);
     const [history, setHistory] = React.useState([]);
 
-    // NOVOS ESTADOS: Edição e Preview de Mídia
     const [editingId, setEditingId] = React.useState(null);
     const [previewMedia, setPreviewMedia] = React.useState(null);
 
-    // 1. Busca o Histórico de Notificações em Tempo Real
     React.useEffect(() => {
         if (!db) return;
         const q = query(collection(db, "system_notifications"), orderBy("createdAt", "desc"));
@@ -4136,8 +4182,7 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
         return () => unsubscribe();
     }, [db]);
 
-    // 2. Filtro de Alunos
-    const filteredUsers = alunos.filter(u => {
+    const filteredUsers = (alunos || []).filter(u => {
         if (u.role === 'admin') return false;
         if (!searchTerm) return true;
         const term = searchTerm.toLowerCase();
@@ -4146,7 +4191,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
         return name.includes(term) || email.includes(term);
     });
 
-    // 3. Função de Upload de MÚLTIPLOS Arquivos
     const handleFileUpload = async (files) => {
         if (!files || files.length === 0) return;
         
@@ -4159,7 +4203,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
 
         try {
             const newAttachments = [];
-            
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 const data = await uploadToCustomDrive(file, 'Notificacoes/Anexos/');
@@ -4176,7 +4219,7 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
             clearInterval(progressInterval);
             setUploadProgress(100);
 
-            setAttachments(prev => [...prev, ...newAttachments]);
+            setAttachments(prev => [...(prev || []), ...newAttachments]);
             showNotification(`${newAttachments.length} arquivo(s) anexado(s) com sucesso!`, "success");
 
         } catch (error) {
@@ -4193,10 +4236,9 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
     };
 
     const handleRemoveAttachment = (indexToRemove) => {
-        setAttachments(prev => prev.filter((_, index) => index !== indexToRemove));
+        setAttachments(prev => (prev || []).filter((_, index) => index !== indexToRemove));
     };
 
-    // FUNÇÃO: Prepara o formulário para Editar um aviso antigo
     const handleEditClick = (notif) => {
         setEditingId(notif.id);
         setTitle(notif.title);
@@ -4214,7 +4256,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
             setSelectedUser(null);
         }
 
-        // Puxa as mídias (Suporte para formato antigo ou novo)
         let atts = [];
         if (notif.attachments && notif.attachments.length > 0) {
             atts = notif.attachments;
@@ -4223,7 +4264,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
         }
         setAttachments(atts);
         
-        // Rola a tela suavemente para cima onde está o formulário
         window.scrollTo({ top: 0, behavior: 'smooth' });
         showNotification("Modo de edição ativado.", "info");
     };
@@ -4238,67 +4278,53 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
         setAttachments([]);
     };
 
-    // 4. Função de Envio/Edição para o Banco de Dados
     const handleSend = async () => {
         if (!title.trim() || !message.trim()) return showNotification("Preencha título e mensagem.", "error");
         if (targetMode === 'specific' && !selectedUser) return showNotification("Busque e selecione um aluno.", "error");
 
         setIsSending(true);
         try {
-            // Lógica de Renderização de Botões Inteligentes no Corpo (Tag [BOTAO_N])
-            let bodyWithButtons = emailBody.replace(/\n/g, '<br>');
-            emailStyles.buttons.forEach((btn, i) => {
-                const tag = `[BOTAO_${i + 1}]`;
-                const btnHtml = `<div style="text-align: center; margin: 25px 0;"><a href="${btn.link || '#'}" style="background-color: ${btn.color}; color: #ffffff; padding: 15px 35px; text-decoration: none; border-radius: 12px; font-weight: bold; display: inline-block; font-family: sans-serif;">${btn.text}</a></div>`;
-                
-                if (bodyWithButtons.includes(tag)) {
-                    bodyWithButtons = bodyWithButtons.replace(tag, btnHtml);
-                } else {
-                    bodyWithButtons += btnHtml; // Se a tag não for encontrada, anexa ao final
-                }
-            });
-
             const payload = {
-                type: "campaign",
-                recipients: recipientList.join(','),
-                subject: emailSubject,
-                body: bodyWithButtons,
-                attachments: attachments, 
-                ...emailStyles,
-                senderName: emailStyles.senderName || generalSettings.platformName || "Comunidade VIP"
+                title: title.trim(),
+                message: message.trim(),
+                type: type,
+                targetMode: targetMode,
+                attachments: attachments || [],
+                updatedAt: serverTimestamp()
             };
 
+            if (targetMode === 'specific') {
+                payload.targetUserId = selectedUser.id;
+                payload.targetUserName = selectedUser.nome || selectedUser.displayName || 'Aluno';
+                payload.targetUserEmail = selectedUser.email;
+            }
+
             if (editingId) {
-                // ATUALIZA O EXISTENTE
                 await updateDoc(doc(db, "system_notifications", editingId), payload);
                 showNotification("Aviso atualizado com sucesso!", "success");
             } else {
-                // CRIA UM NOVO E ZERA OS LEITORES
                 payload.createdAt = serverTimestamp();
                 payload.readBy = []; 
                 await addDoc(collection(db, "system_notifications"), payload);
                 showNotification("Notificação enviada com sucesso!", "success");
             }
 
-            // Limpa Tudo
             cancelEdit();
-
         } catch (error) {
-            console.error("Erro ao enviar/editar:", error);
+            console.error("Erro ao enviar/editar notificação:", error);
             showNotification("Erro ao processar notificação.", "error");
         } finally {
             setIsSending(false);
         }
     };
 
-    // 5. Excluir do Histórico
     const handleDelete = async (id) => {
         requestConfirmation(
             "Excluir Notificação",
             "Deseja apagar esta notificação do histórico global? Ela não aparecerá mais para os alunos.",
             async () => {
                 await deleteDoc(doc(db, "system_notifications", id));
-                if(editingId === id) cancelEdit(); // Cancela edição se apagar o que está editando
+                if(editingId === id) cancelEdit(); 
                 showNotification("Aviso excluído.", "success");
             }
         );
@@ -4306,8 +4332,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start relative">
-            
-            {/* LADO ESQUERDO: Formulário de Envio/Edição */}
             <div className={`lg:col-span-5 ${theme.card} p-6 rounded-2xl border shadow-sm sticky top-24`}>
                 <div className="flex justify-between items-center mb-6 border-b border-slate-200 dark:border-slate-800 pb-4">
                     <h3 className={`font-bold text-lg ${theme.text} flex items-center gap-2`}>
@@ -4322,23 +4346,20 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                 </div>
 
                 <div className="space-y-5">
-                    {/* Título */}
                     <div>
                         <label className={`block text-[10px] font-bold ${theme.textSec} uppercase tracking-wider mb-2`}>Título do Aviso</label>
-                        <input type="text" value={title} onChange={e => setTitle(e.target.value)} className={`w-full px-4 py-3 ${theme.input}`} placeholder="Ex: Nova Aula Liberada e Material Extra!" />
+                        <input type="text" value={title} onChange={e => setTitle(e.target.value)} className={`w-full px-4 py-3 rounded-lg border ${theme.input}`} placeholder="Ex: Nova Aula Liberada e Material Extra!" />
                     </div>
 
-                    {/* Mensagem */}
                     <div>
                         <label className={`block text-[10px] font-bold ${theme.textSec} uppercase tracking-wider mb-2`}>Mensagem Completa</label>
-                        <textarea rows="4" value={message} onChange={e => setMessage(e.target.value)} className={`w-full px-4 py-3 resize-none ${theme.input}`} placeholder="Escreva os detalhes do aviso aqui..."/>
+                        <textarea rows="4" value={message} onChange={e => setMessage(e.target.value)} className={`w-full px-4 py-3 rounded-lg border resize-none ${theme.input}`} placeholder="Escreva os detalhes do aviso aqui..."/>
                     </div>
 
-                    {/* UPLOAD MÚLTIPLO */}
                     <div>
                         <label className={`block text-[10px] font-bold ${theme.textSec} uppercase tracking-wider mb-2`}>Anexar Mídias (Fotos e Vídeos)</label>
                         
-                        {attachments.length > 0 && (
+                        {(attachments || []).length > 0 && (
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
                                 {attachments.map((att, idx) => (
                                     <div key={idx} className="relative group rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-black aspect-video flex items-center justify-center shadow-sm">
@@ -4363,7 +4384,7 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                             </div>
                         )}
 
-                        <div className={`relative flex flex-col items-center justify-center w-full ${attachments.length > 0 ? 'min-h-[80px]' : 'min-h-[140px]'} border-2 border-dashed rounded-xl transition-all overflow-hidden border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800`}>
+                        <div className={`relative flex flex-col items-center justify-center w-full ${(attachments || []).length > 0 ? 'min-h-[80px]' : 'min-h-[140px]'} border-2 border-dashed rounded-xl transition-all overflow-hidden border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800`}>
                             {isUploadingFile ? (
                                 <div className="w-full px-8 flex flex-col items-center justify-center z-10 py-6">
                                     <div className="flex justify-between w-full text-xs font-bold text-indigo-500 mb-2">
@@ -4374,140 +4395,16 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                                         <div className="bg-indigo-500 h-full transition-all duration-300 ease-out relative" style={{width: `${uploadProgress}%`}}>
                                             <div className="absolute top-0 bottom-0 right-0 w-20 bg-gradient-to-r from-transparent to-white/30 animate-pulse"></div>
                                         </div>
-                    </div>
-
-                    {/* NOVA TABELA DE DETALHAMENTO DE VENDAS */}
-                    <div className={`${theme.card} border shadow-sm overflow-hidden`}>
-                        <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex justify-between items-center">
-                            <h3 className={`text-sm font-bold ${theme.text} uppercase tracking-wider flex items-center gap-2`}>
-                                <Icons.LayoutList className="text-indigo-500" size={16} /> Extrato Detalhado de Conversões
-                            </h3>
-                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full">{stats.allDetailed.length} Transações</span>
-                        </div>
-                        <div className="overflow-x-auto custom-scrollbar">
-                            <table className="w-full text-left text-xs md:text-sm">
-                                <thead className={`${theme.tableHeader} border-b border-slate-200 dark:border-slate-800`}>
-                                    <tr>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px]">Data/Hora</th>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px]">Cliente</th>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px]">Produto/Curso</th>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px]">Valor Venda</th>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-right">Minha Comissão</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                    {stats.allDetailed.length === 0 ? (
-                                        <tr>
-                                            <td colSpan="5" className="p-12 text-center text-slate-400 italic">Nenhum registro de venda encontrado para este período.</td>
-                                        </tr>
-                                    ) : (
-                                        stats.allDetailed.map((sale, i) => (
-                                            <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                                <td className="p-4 font-mono text-[10px] text-slate-500">
-                                                    {sale.createdAt?.seconds ? new Date(sale.createdAt.seconds * 1000).toLocaleString('pt-BR') : 'Agora'}
-                                                </td>
-                                                <td className="p-4">
-                                                    <p className={`font-bold ${theme.text}`}>{sale.userName}</p>
-                                                    <p className="text-[10px] text-slate-400">{sale.userEmail}</p>
-                                                </td>
-                                                <td className="p-4">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className={`w-2 h-2 rounded-full ${sale.productTitle ? 'bg-pink-500' : 'bg-indigo-500'}`}></span>
-                                                        <p className={`font-medium ${theme.text}`}>{sale.productTitle || sale.courseTitle}</p>
-                                                    </div>
-                                                </td>
-                                                <td className="p-4 font-medium text-slate-600 dark:text-slate-400">
-                                                    R$ {sale.displayPrice.toFixed(2).replace('.', ',')}
-                                                </td>
-                                                <td className="p-4 text-right">
-                                                    <div className="flex flex-col items-end">
-                                                        <span className="font-black text-emerald-500 text-base">R$ {sale.displayComm.toFixed(2).replace('.', ',')}</span>
-                                                        <span className="text-[9px] font-bold text-slate-400 uppercase">{sale.commPercent}% de taxa</span>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    {/* TABELA DE REGISTRO DE VENDAS PERMANENTE (VISÍVEL MESMO SEM DADOS) */}
-                    <div className={`${theme.card} border shadow-sm overflow-hidden animate-fade-in`}>
-                        <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex justify-between items-center">
-                            <div>
-                                <h3 className={`text-sm font-bold ${theme.text} uppercase tracking-wider flex items-center gap-2`}>
-                                    <Icons.LayoutList className="text-indigo-500" size={16} /> Registro Geral de Vendas e Comissões
-                                </h3>
-                                <p className="text-[10px] text-slate-400 mt-0.5 uppercase font-bold tracking-widest">Sincronização em tempo real ativada</p>
-                            </div>
-                            <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${stats.allDetailed.length > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-400'}`}>
-                                {stats.allDetailed.length} Transações Detectadas
-                            </span>
-                        </div>
-                        <div className="overflow-x-auto custom-scrollbar">
-                            <table className="w-full text-left text-xs md:text-sm border-collapse">
-                                <thead className={`${theme.tableHeader} border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80`}>
-                                    <tr>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Data / Horário</th>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Cliente Adquirente</th>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Produto / Origem</th>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Preço Bruto</th>
-                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500 text-right">Comissão Líquida</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                    {stats.allDetailed.length === 0 ? (
-                                        <tr>
-                                            <td colSpan="5" className="p-20 text-center">
-                                                <div className="flex flex-col items-center justify-center opacity-30">
-                                                    <Icons.ShoppingBag size={48} className="mb-3 text-slate-400" />
-                                                    <p className="text-sm font-bold uppercase tracking-widest">Aguardando as primeiras vendas</p>
-                                                    <p className="text-xs mt-1">Os dados aparecerão aqui automaticamente após a aprovação.</p>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        stats.allDetailed.map((sale, i) => (
-                                            <tr key={sale.id || i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                                                <td className="p-4 font-mono text-[10px] text-slate-500">
-                                                    {sale.createdAt?.seconds ? new Date(sale.createdAt.seconds * 1000).toLocaleString('pt-PT') : 'Agora'}
-                                                </td>
-                                                <td className="p-4">
-                                                    <p className={`font-bold ${theme.text} group-hover:text-indigo-500 transition-colors`}>{sale.userName}</p>
-                                                    <p className="text-[10px] text-slate-400 font-medium">{sale.userEmail}</p>
-                                                </td>
-                                                <td className="p-4">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className={`w-2 h-2 rounded-full ${sale.productTitle ? 'bg-pink-500 shadow-[0_0_8px_rgba(236,72,153,0.5)]' : 'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.5)]'}`}></div>
-                                                        <p className={`font-bold ${theme.text} text-xs`}>{sale.productTitle || sale.courseTitle || 'Produto VIP'}</p>
-                                                    </div>
-                                                </td>
-                                                <td className="p-4 font-bold text-slate-600 dark:text-slate-400">
-                                                    R$ {sale.displayPrice.toFixed(2).replace('.', ',')}
-                                                </td>
-                                                <td className="p-4 text-right">
-                                                    <div className="flex flex-col items-end">
-                                                        <span className="font-black text-emerald-500 text-base">R$ {sale.displayComm.toFixed(2).replace('.', ',')}</span>
-                                                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{sale.commPercent}% de comissão</span>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            ) : (
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-2 animate-pulse">Isso pode levar alguns minutos...</p>
+                                </div>
+                            ) : (
                                 <label className="cursor-pointer flex flex-col items-center justify-center w-full h-full py-4 absolute inset-0 group">
                                     <div className="w-10 h-10 bg-slate-200 dark:bg-slate-700 rounded-full flex items-center justify-center mb-2 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/30 transition-colors">
                                         <Icons.Plus className="w-5 h-5 text-slate-500 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors"/> 
                                     </div>
                                     <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                                        {attachments.length > 0 ? 'Adicionar mais mídias' : 'Clique para anexar Imagens ou Vídeos'}
+                                        {(attachments || []).length > 0 ? 'Adicionar mais mídias' : 'Clique para anexar Imagens ou Vídeos'}
                                     </span>
                                     <span className="text-[10px] text-green-600 dark:text-green-500 mt-1 font-bold">Sem limites de tamanho. Selecione vários de uma vez!</span>
                                     <input 
@@ -4523,10 +4420,9 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                         </div>
                     </div>
 
-                    {/* Tipo de Aviso */}
                     <div>
                         <label className={`block text-[10px] font-bold ${theme.textSec} uppercase tracking-wider mb-2`}>Tipo de Aviso (Cor)</label>
-                        <select value={type} onChange={e => setType(e.target.value)} className={`w-full px-4 py-3 cursor-pointer ${theme.input}`}>
+                        <select value={type} onChange={e => setType(e.target.value)} className={`w-full px-4 py-3 rounded-lg border cursor-pointer ${theme.input}`}>
                             <option value="info">Informativo (Azul)</option>
                             <option value="success">Sucesso (Verde)</option>
                             <option value="warning">Atenção (Amarelo)</option>
@@ -4534,7 +4430,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                         </select>
                     </div>
 
-                    {/* Destinatário */}
                     <div className="border-t border-slate-200 dark:border-slate-800 pt-4 mt-2">
                         <label className={`block text-[10px] font-bold ${theme.textSec} uppercase tracking-wider mb-3`}>Quem vai receber?</label>
                         <div className="flex flex-col sm:flex-row gap-4 mb-4">
@@ -4548,7 +4443,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                             </label>
                         </div>
 
-                        {/* Campo de Busca e Lista */}
                         {targetMode === 'specific' && (
                             <div className="animate-fade-in bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
                                 {selectedUser ? (
@@ -4611,26 +4505,25 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                 </div>
             </div>
 
-            {/* LADO DIREITO: Histórico */}
             <div className={`lg:col-span-7 ${theme.card} rounded-2xl border shadow-sm h-[calc(100vh-100px)] flex flex-col overflow-hidden sticky top-4`}>
                 <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-900/50">
                     <h3 className={`font-bold text-lg ${theme.text} flex items-center gap-2`}>
                         <Icons.Bell className="w-5 h-5 text-indigo-500"/> Histórico de Avisos
                     </h3>
                     <span className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-                        {history.length} Enviados
+                        {(history || []).length} Enviados
                     </span>
                 </div>
 
                 <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
-                    {history.length === 0 ? (
+                    {(history || []).length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
                             <Icons.Bell className="w-12 h-12 mb-3" />
                             <p className="text-sm font-medium">Nenhuma notificação enviada.</p>
                         </div>
                     ) : (
                         <div className="space-y-4">
-                            {history.map(notif => {
+                            {(history || []).map(notif => {
                                 const colors = {
                                     info: 'bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 border-blue-200 dark:border-blue-800',
                                     success: 'bg-green-100 text-green-600 dark:bg-green-900/20 dark:text-green-400 border-green-200 dark:border-green-800',
@@ -4639,7 +4532,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                                 };
                                 const style = colors[notif.type] || colors.info;
 
-                                // Resolve o formato antigo vs novo de mídias
                                 let mediaList = [];
                                 if (notif.attachments && notif.attachments.length > 0) {
                                     mediaList = notif.attachments;
@@ -4661,7 +4553,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                                         
                                         <p className={`text-xs ${theme.textSec} mb-3 whitespace-pre-wrap`}>{notif.message}</p>
                                         
-                                        {/* EXIBE MÚLTIPLAS MÍDIAS NO HISTÓRICO COM PREVIEW INTERNO */}
                                         {mediaList.length > 0 && (
                                             <div className={`mb-3 grid gap-2 ${mediaList.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
                                                 {mediaList.map((att, i) => (
@@ -4690,72 +4581,18 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                                             </div>
                                         )}
 
-                                        {/* FOOTER COM NOME/EMAIL E BOTÕES DESTACADOS */}
                                         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end pt-3 border-t border-slate-200 dark:border-slate-800 mt-2 gap-4">
-                                            
-                                            {/* Informações do Destinatário */}
                                             <div className={`text-[10px] px-2.5 py-1.5 rounded-lg w-fit ${notif.targetMode === 'all' ? 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300' : 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-200 dark:border-purple-800'}`}>
                                                 {notif.targetMode === 'all' ? (
                                                     <span className="font-bold tracking-wide">Enviado para: Todos os Alunos</span>
                                                 ) : (
                                                     <div className="flex flex-col">
-                                <label className="text-[10px] font-bold text-slate-400 uppercase">Gerenciador de Botões</label>
-                                <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 flex-1 space-y-4 overflow-y-auto max-h-[400px] custom-scrollbar">
-                                   {emailStyles.buttons.map((btn, idx) => (
-                                       <div key={btn.id} className="p-3 bg-white dark:bg-slate-900 border rounded-xl shadow-sm space-y-2 relative animate-fade-in">
-                                           <button onClick={() => {
-                                               const newBtns = emailStyles.buttons.filter(b => b.id !== btn.id);
-                                               setEmailStyles({...emailStyles, buttons: newBtns});
-                                           }} className="absolute top-2 right-2 text-red-500 hover:scale-110 transition-transform"><Icons.X size={14}/></button>
-                                           
-                                           <div className="flex items-center gap-2 mb-1">
-                                               <span className="text-[9px] font-black bg-indigo-600 text-white px-2 py-0.5 rounded">Tag: [BOTAO_{idx+1}]</span>
-                                               <input type="color" value={btn.color} onChange={e => {
-                                                   const newBtns = emailStyles.buttons.map(b => b.id === btn.id ? {...b, color: e.target.value} : b);
-                                                   setEmailStyles({...emailStyles, buttons: newBtns});
-                                               }} className="w-4 h-4 rounded cursor-pointer border-none bg-transparent" />
-                                           </div>
-
-                                           <input type="text" placeholder="Texto do Botão" value={btn.text} onChange={e => {
-                                               const newBtns = emailStyles.buttons.map(b => b.id === btn.id ? {...b, text: e.target.value} : b);
-                                               setEmailStyles({...emailStyles, buttons: newBtns});
-                                           }} className={`w-full p-2 text-[11px] rounded border ${theme.input}`} />
-                                           
-                                           <div className="flex gap-2">
-                                               <input type="text" placeholder="URL ou Link do Arquivo" value={btn.link} onChange={e => {
-                                                   const newBtns = emailStyles.buttons.map(b => b.id === btn.id ? {...b, link: e.target.value} : b);
-                                                   setEmailStyles({...emailStyles, buttons: newBtns});
-                                               }} className={`flex-1 p-2 text-[10px] rounded border ${theme.input}`} />
-                                               
-                                               <label className="cursor-pointer p-2 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors" title="Anexar arquivo a este botão">
-                                                   <Icons.Paperclip size={14}/>
-                                                   <input type="file" className="hidden" onChange={async (e) => {
-                                                       const res = await uploadToCustomDrive(e.target.files[0], 'Emails/Botoes/');
-                                                       if(res) {
-                                                           const newBtns = emailStyles.buttons.map(b => b.id === btn.id ? {...b, link: res.url} : b);
-                                                           setEmailStyles({...emailStyles, buttons: newBtns});
-                                                           showNotification("Ficheiro vinculado ao botão!", "success");
-                                                       }
-                                                   }} />
-                                               </label>
-                                           </div>
-                                       </div>
-                                   ))}
-                                   
-                                   <button onClick={() => {
-                                       setEmailStyles({
-                                           ...emailStyles, 
-                                           buttons: [...emailStyles.buttons, { id: Date.now(), text: 'NOVO BOTÃO', link: '', color: '#4f46e5' }]
-                                       });
-                                   }} className="w-full py-3 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl text-[10px] font-black text-slate-400 hover:text-indigo-500 hover:border-indigo-500 transition-all flex items-center justify-center gap-2 uppercase">
-                                       <Icons.Plus size={14}/> Adicionar Outro Botão
-                                   </button>
-                                </div>
-                            </div>
+                                                        <span className="font-bold tracking-wide">Enviado Específico para:</span>
+                                                        <span className="opacity-80">{notif.targetUserName} ({notif.targetUserEmail})</span>
+                                                    </div>
                                                 )}
                                             </div>
                                             
-                                            {/* BOTÕES DE AÇÃO: EDITAR E EXCLUIR */}
                                             <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                                                 <button 
                                                     onClick={() => handleEditClick(notif)}
@@ -4782,7 +4619,6 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                 </div>
             </div>
 
-            {/* MODAL DE VISUALIZAÇÃO EM TELA CHEIA PARA ADMIN */}
             {previewMedia && (
                 <div 
                     className="fixed inset-0 z-[999999] flex items-center justify-center p-4 sm:p-8 bg-black/90 backdrop-blur-md animate-fade-in" 
@@ -4804,14 +4640,9 @@ const AdminNotificationCenter = ({ db, alunos, theme, Icons, showNotification, u
                     </div>
                 </div>
             )}
-
-            ====
         </div>
     );
 };
-// =================================================================================
-// FIM DO COMPONENTE ADMIN: NOTIFICAÇÕES
-// =================================================================================
 
 // =================================================================================
 // NOVO COMPONENTE ADMIN: MODAL DE VISUALIZAÇÃO DO CERTIFICADO AUTOMÁTICO DO ALUNO
@@ -6004,7 +5835,7 @@ const AdminPromotionsTab = ({ db, theme, Icons, showNotification, requestConfirm
 
 
 // =================================================================================
-// COMPONENTE ADMIN: ABA DE CANCELAMENTOS PRINCIPAL (SOLICITAÇÕES E APROVAÇÃO)
+// COMPONENTE ADMIN: SOLICITAÇÕES DE CANCELAMENTO (DESIGN SAAS PREMIUM)
 // =================================================================================
 const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConfirmation }) => {
     const [cancelLoja, setCancelLoja] = React.useState([]);
@@ -6033,10 +5864,9 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
         );
     };
 
-   React.useEffect(() => {
+    React.useEffect(() => {
         if (!db) return;
-        
-        // Vamos englobar TODAS as grafias possíveis que representem cancelamento
+
         const statusCancelamentoValidos = ["solicitado_cancelamento", "cancelado", "cancelled"];
 
         // 1. Escuta solicitações da LOJA VIP (Produtos)
@@ -6049,7 +5879,7 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
         const qCursos = query(collection(db, "transactions"), where("status", "in", statusCancelamentoValidos));
         const unsubCursos = onSnapshot(qCursos, (snapshot) => {
             setCancelCursos(snapshot.docs.map(doc => ({ id: doc.id, _origem: 'transactions', ...doc.data() })));
-            setIsLoading(false);
+            setIsLoading(false); // Agora a tela de carregamento vai sumir corretamente!
         });
 
         return () => { unsubLoja(); unsubCursos(); };
@@ -6064,7 +5894,6 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
             "Você já realizou o estorno deste pagamento no painel do Mercado Pago? Se sim, confirme para atualizar o status para 'Cancelado Definitivo'. O acesso do aluno continuará bloqueado.",
             async () => {
                 try {
-                    const { doc, updateDoc, serverTimestamp } = window.firebaseFirestoreObj || await import('https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js');
                     await updateDoc(doc(db, origem, pedidoId), {
                         status: 'cancelado',
                         updatedAt: serverTimestamp()
@@ -6082,7 +5911,6 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
         if (!amount || isNaN(amount)) return;
         requestConfirmation("Conceder Créditos", `Deseja adicionar ${amount} créditos e encerrar este pedido?`, async () => {
             try {
-                const { doc, getDoc, updateDoc, serverTimestamp } = window.firebaseFirestoreObj || await import('https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js');
                 const userRef = doc(db, "users", pedido.userId);
                 const userSnap = await getDoc(userRef);
                 const currentBalance = userSnap.exists() ? (Number(userSnap.data().pointsBalance) || 0) : 0;
@@ -6099,7 +5927,6 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
             "Tem certeza que deseja RECUSAR este pedido de cancelamento (ex: passou do prazo de garantia)? O aluno terá o ACESSO DEVOLVIDO na hora.",
             async () => {
                 try {
-                    const { doc, updateDoc, serverTimestamp } = window.firebaseFirestoreObj || await import('https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js');
                     await updateDoc(doc(db, origem, pedidoId), {
                         status: 'pago', // Devolve o acesso
                         updatedAt: serverTimestamp()
@@ -6113,90 +5940,117 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
     };
 
     return (
-        <div className="space-y-6 animate-fade-in pb-20">
-            {/* Cabeçalho da Página */}
-            <div className="border-b border-slate-200 dark:border-slate-700 pb-4 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-                <div>
-                    <h2 className={`text-2xl font-bold ${theme.text} flex items-center gap-2`}>
-                        <Icons.XCircle className="text-amber-500" /> Solicitações de Cancelamento
-                    </h2>
-                    <p className={`text-sm ${theme.textSec} mt-1`}>
-                        Gerencie os pedidos de estorno de Cursos e Produtos da Loja.
+        <div className="space-y-8 animate-fade-in pb-20">
+            {/* Cabeçalho Premium */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 bg-white dark:bg-[#0F172A] p-8 rounded-3xl border border-slate-200 dark:border-slate-800/60 shadow-lg relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-red-500/5 blur-3xl rounded-full pointer-events-none"></div>
+                <div className="relative z-10">
+                    <div className="flex items-center gap-3 mb-2">
+                        <div className="w-12 h-12 rounded-2xl bg-red-50 dark:bg-red-500/10 flex items-center justify-center text-red-500 shadow-inner border border-red-100 dark:border-red-500/20">
+                            <Icons.XCircle size={24} />
+                        </div>
+                        <h2 className={`text-3xl font-black tracking-tight ${theme.text}`}>Cancelamentos</h2>
+                    </div>
+                    <p className={`text-sm ${theme.textSec} ml-1`}>
+                        Gerencie os pedidos de estorno e avalie o prazo de garantia.
                     </p>
                 </div>
-                <div className="flex items-center gap-3">
+                
+                <div className="flex flex-wrap items-center gap-3 relative z-10 w-full md:w-auto">
+                    <span className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-bold px-4 py-3 rounded-xl border border-red-100 dark:border-red-500/20 flex items-center gap-2 shadow-sm w-full md:w-auto justify-center">
+                        <Icons.AlertCircle className="w-4 h-4" />
+                        {cancelamentos.length} Pendências
+                    </span>
                     <button 
                         onClick={handleManualRefresh}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs transition-all border ${theme.card} ${isRefreshing ? 'opacity-50' : 'hover:border-indigo-500'}`}
+                        disabled={isRefreshing}
+                        className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold text-xs transition-all border shadow-sm ${isRefreshing ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed border-transparent' : 'bg-white dark:bg-[#1E293B] text-slate-700 dark:text-slate-200 hover:shadow-md hover:-translate-y-0.5 border-slate-200 dark:border-slate-700'}`}
                     >
                         <Icons.Refresh className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-indigo-500' : ''}`} />
-                        Atualizar
+                        {isRefreshing ? 'Atualizando...' : 'Sincronizar'}
                     </button>
-                    <span className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 text-xs font-bold px-4 py-2 rounded-full uppercase tracking-wider flex items-center gap-2 shadow-sm">
-                        <Icons.AlertCircle className="w-4 h-4" />
-                        {cancelamentos.length} Registros
-                    </span>
                 </div>
             </div>
 
-            {/* Tabela de Cancelamentos */}
-            <div className={`${theme.card} border shadow-sm overflow-hidden rounded-2xl`}>
+            {/* Tabela de Cancelamentos Estilo SaaS */}
+            <div className="bg-white dark:bg-[#0F172A] rounded-3xl border border-slate-200 dark:border-slate-800/60 shadow-xl overflow-hidden">
                 {isLoading ? (
-                    <div className="flex justify-center py-20"><Icons.Loading className="w-8 h-8 text-amber-500 animate-spin" /></div>
+                    <div className="flex flex-col items-center justify-center py-24 gap-4">
+                        <div className="w-12 h-12 border-4 border-slate-200 border-t-red-500 rounded-full animate-spin"></div>
+                        <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Carregando solicitações...</p>
+                    </div>
                 ) : (
                     <div className="overflow-x-auto custom-scrollbar">
-                        <table className="w-full text-left text-sm">
-                            <thead className={`${theme.tableHeader} border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50`}>
+                        <table className="w-full text-left">
+                            <thead className="bg-slate-50/80 dark:bg-[#1E293B]/50 border-b border-slate-200 dark:border-slate-800">
                                 <tr>
-                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Data</th>
-                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Aluno</th>
-                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Item Cancelado</th>
-                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Motivo Informado</th>
-                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500 text-center">Status / Ação</th>
+                                    <th className="px-6 py-5 font-black uppercase tracking-widest text-[10px] text-slate-500 w-32">Data do Pedido</th>
+                                    <th className="px-6 py-5 font-black uppercase tracking-widest text-[10px] text-slate-500">Dados do Aluno</th>
+                                    <th className="px-6 py-5 font-black uppercase tracking-widest text-[10px] text-slate-500">Detalhes do Item</th>
+                                    <th className="px-6 py-5 font-black uppercase tracking-widest text-[10px] text-slate-500 w-1/4">Motivo do Cancelamento</th>
+                                    <th className="px-6 py-5 font-black uppercase tracking-widest text-[10px] text-slate-500 text-center w-48">Ação Necessária</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                                 {cancelamentos.length === 0 ? (
                                     <tr>
-                                        <td colSpan="5" className="p-16 text-center">
-                                            <Icons.CheckCircle className="w-12 h-12 mx-auto mb-4 text-emerald-500 opacity-50" />
-                                            <p className={`text-lg font-bold ${theme.text}`}>Nenhum cancelamento registrado!</p>
-                                            <p className={`text-sm ${theme.textSec} mt-1`}>Excelente taxa de retenção na plataforma.</p>
+                                        <td colSpan="5" className="px-6 py-20 text-center">
+                                            <div className="flex flex-col items-center justify-center">
+                                                <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-500/10 rounded-full flex items-center justify-center mb-4">
+                                                    <Icons.CheckCircle className="w-10 h-10 text-emerald-500" />
+                                                </div>
+                                                <p className={`text-xl font-black ${theme.text}`}>Tudo limpo por aqui!</p>
+                                                <p className={`text-sm ${theme.textSec} mt-2 max-w-md`}>Nenhum aluno solicitou cancelamento. Sua taxa de retenção está excelente.</p>
+                                            </div>
                                         </td>
                                     </tr>
                                 ) : (
                                     cancelamentos.map(pedido => (
-                                        <tr key={pedido.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                            <td className="p-4 font-mono text-[10px] text-slate-500 whitespace-nowrap">
-                                                {pedido.updatedAt?.seconds ? new Date(pedido.updatedAt.seconds * 1000).toLocaleString('pt-BR') : 'Data Desconhecida'}
+                                        <tr key={pedido.id} className="hover:bg-slate-50/50 dark:hover:bg-[#1E293B]/40 transition-colors duration-300 group">
+                                            <td className="px-6 py-5 align-top">
+                                                <span className="inline-block px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-lg font-mono text-[10px] font-bold border border-slate-200 dark:border-slate-700">
+                                                    {pedido.updatedAt?.seconds ? new Date(pedido.updatedAt.seconds * 1000).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'Data Indisponível'}
+                                                </span>
                                             </td>
-                                            <td className="p-4">
-                                                <p className={`font-bold ${theme.text}`}>{pedido.userName || 'Aluno'}</p>
-                                                <p className="text-[10px] text-slate-400">{pedido.userEmail}</p>
+                                            
+                                            <td className="px-6 py-5 align-top">
+                                                <div className="flex items-start gap-3">
+                                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center font-black text-slate-500 dark:text-slate-300 shadow-inner shrink-0 border border-white/50 dark:border-white/5">
+                                                        {(pedido.userName || 'A').charAt(0).toUpperCase()}
+                                                    </div>
+                                                    <div>
+                                                        <p className={`font-bold text-sm ${theme.text} leading-tight`}>{pedido.userName || 'Nome não informado'}</p>
+                                                        <p className="text-[11px] text-slate-500 font-medium mt-1">{pedido.userEmail}</p>
+                                                    </div>
+                                                </div>
                                             </td>
-                                            <td className="p-4">
-                                                <div className="flex flex-col gap-1">
+                                            
+                                            <td className="px-6 py-5 align-top">
+                                                <div className="flex flex-col gap-2">
+                                                    <p className="font-bold text-slate-800 dark:text-slate-200 text-sm line-clamp-2 leading-snug" title={pedido.productTitle || pedido.courseTitle}>
+                                                        {pedido.productTitle || pedido.courseTitle || 'Item Desconhecido'}
+                                                    </p>
                                                     <div className="flex items-center gap-2">
-                                                        <span className={`font-bold px-2.5 py-1 rounded-md text-[10px] uppercase tracking-widest inline-block border ${pedido._origem === 'transactions' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800' : 'bg-pink-50 dark:bg-pink-900/20 text-pink-600 dark:text-pink-400 border-pink-200 dark:border-pink-800'}`}>
-                                                            {pedido._origem === 'transactions' ? 'Curso' : 'Produto da Loja'}
+                                                        <span className={`px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest border ${pedido._origem === 'transactions' ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/20' : 'bg-pink-50 dark:bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-200 dark:border-pink-500/20'}`}>
+                                                            {pedido._origem === 'transactions' ? 'Curso' : 'Produto'}
                                                         </span>
                                                         {parseFloat(String(pedido.valor || 0)) <= 0 && (
-                                                            <span className="bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-1 rounded-md text-[9px] font-black uppercase">Grátis</span>
+                                                            <span className="bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 px-2 py-1 rounded-md text-[9px] font-black uppercase">Grátis</span>
                                                         )}
                                                     </div>
                                                 </div>
-                                                <p className="font-medium text-slate-700 dark:text-slate-300 text-[12px] truncate max-w-[200px]" title={pedido.productTitle || pedido.courseTitle}>
-                                                    {pedido.productTitle || pedido.courseTitle || 'Item VIP'}
-                                                </p>
                                             </td>
-                                            <td className="p-4 min-w-[200px]">
-                                                <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-800/50 p-2.5 rounded-lg shadow-inner">
-                                                    <p className="text-xs font-medium text-red-700 dark:text-red-400 whitespace-pre-wrap">
-                                                        {pedido.cancelReason || 'Motivo não especificado.'}
+                                            
+                                            <td className="px-6 py-5 align-top">
+                                                <div className="bg-slate-50 dark:bg-[#151E2F] border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl shadow-inner relative">
+                                                    <Icons.MessageSquare className="absolute top-3.5 right-3 w-4 h-4 text-slate-300 dark:text-slate-700 opacity-50" />
+                                                    <p className="text-[11px] font-medium text-slate-600 dark:text-slate-400 whitespace-pre-wrap leading-relaxed pr-6">
+                                                        "{pedido.cancelReason || 'O aluno não especificou um motivo para o cancelamento.'}"
                                                     </p>
                                                 </div>
                                             </td>
-                                            <td className="p-4 text-center">
+                                            
+                                            <td className="px-6 py-5 align-top">
                                                 {pedido.status === 'solicitado_cancelamento' ? (
                                                     <div className="flex flex-col items-center gap-2">
                                                         {(() => {
@@ -6205,70 +6059,65 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
                                                             const isUnder7 = days <= 7;
                                                             const isFree = parseFloat(String(pedido.valor || 0)) <= 0;
                                                             const valorReembolso = parseFloat(String(pedido.valor || 0)).toFixed(2).replace('.', ',');
+                                                            
                                                             return (
-                                                                <>
-                                                                    <div className="flex flex-col gap-1 items-center">
-                                                                        <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-sm ${isUnder7 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                                                            {days} dias ({isUnder7 ? 'Em Garantia' : 'Fora da Garantia'})
+                                                                <div className="flex flex-col w-full gap-3 bg-white dark:bg-[#1E293B]/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
+                                                                    
+                                                                    <div className="flex flex-col gap-1.5 items-center">
+                                                                        <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider w-full text-center ${isUnder7 ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'}`}>
+                                                                            {days} dias ({isUnder7 ? 'Na Garantia' : 'Fora do Prazo'})
                                                                         </span>
                                                                         {!isFree && (
-                                                                            <span className="text-[10px] font-black text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 animate-pulse">
-                                                                                REEMBOLSO: R$ {valorReembolso}
+                                                                            <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400">
+                                                                                Reembolsar: R$ {valorReembolso}
                                                                             </span>
                                                                         )}
                                                                     </div>
-                                                                    <div className="flex gap-2 w-full mt-1">
-                                                                        ============
-====
-                                                                        <button 
-                                                                            onClick={() => handleRecusarCancelamento(pedido.id, pedido._origem)}
-                                                                            className="flex-1 bg-white dark:bg-slate-800 border border-slate-300 text-slate-600 dark:text-slate-400 hover:bg-slate-50 px-2 py-2 rounded-lg text-xs font-bold transition-all"
-                                                                        >
-                                                                            Recusar
-                                                                        </button>
+                                                                    
+                                                                    <div className="flex flex-col gap-2 w-full mt-1">
                                                                         {isFree ? (
-                                                                            <div className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-500 border border-dashed border-slate-300 dark:border-slate-700 py-2 rounded-lg text-[10px] font-black uppercase text-center leading-tight">
-                                                                                Item Grátis<br/>Sem Estorno
+                                                                            <div className="bg-slate-100 dark:bg-slate-800 text-slate-500 py-2.5 rounded-xl text-[10px] font-black uppercase text-center flex items-center justify-center gap-1.5">
+                                                                                <Icons.Info size={14}/> Isento
                                                                             </div>
                                                                         ) : isUnder7 ? (
                                                                             <button 
                                                                                 onClick={() => handleConfirmarEstorno(pedido.id, pedido._origem)}
-                                                                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-2 rounded-lg text-xs font-bold transition-all shadow-md"
+                                                                                className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md hover:shadow-emerald-500/30 transition-all active:scale-95 flex items-center justify-center gap-2 w-full"
                                                                             >
-                                                                                Aprovar
+                                                                                <Icons.CheckCircle size={14}/> Aprovar
                                                                             </button>
                                                                         ) : (
                                                                             <button 
                                                                                 onClick={() => handleGiveCredits(pedido)}
-                                                                                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-2 py-2 rounded-lg text-xs font-bold transition-all shadow-md"
+                                                                                className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md hover:shadow-amber-500/30 transition-all active:scale-95 flex items-center justify-center gap-2 w-full"
                                                                             >
-                                                                                Créditos
+                                                                                <Icons.Star size={14}/> Dar Créditos
                                                                             </button>
                                                                         )}
+
+                                                                        <button 
+                                                                            onClick={() => handleRecusarCancelamento(pedido.id, pedido._origem)}
+                                                                            className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all active:scale-95 flex items-center justify-center gap-1.5 w-full"
+                                                                        >
+                                                                            <Icons.X size={14}/> Recusar
+                                                                        </button>
                                                                     </div>
-                                                                </>
+                                                                </div>
                                                             );
                                                         })()}
-                                                        <button 
-                                                            onClick={() => handleDeletePermanently(pedido.id, pedido._origem)}
-                                                            className="p-1.5 text-slate-400 hover:text-red-500 transition-colors mt-1"
-                                                            title="Excluir Registro"
-                                                        >
-                                                            <Icons.Trash2 className="w-4 h-4" />
-                                                        </button>
                                                     </div>
                                                 ) : (
-                                                    <div className="flex flex-col items-center gap-2">
-                                                        <span className="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 shadow-sm">
-                                                            <Icons.CheckCircle size={12} /> 
-                                                            {pedido.status === 'cancelado' ? 'Estornado com Sucesso' : 'Cancelamento Recusado'}
+                                                    <div className="flex flex-col items-center gap-3">
+                                                        <span className={`w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-sm border ${pedido.status === 'cancelado' ? 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700' : 'bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/20'}`}>
+                                                            {pedido.status === 'cancelado' ? <Icons.CheckCircle size={14} /> : <Icons.X size={14} />}
+                                                            {pedido.status === 'cancelado' ? 'Estornado' : 'Recusado'}
                                                         </span>
                                                         <button 
                                                             onClick={() => handleDeletePermanently(pedido.id, pedido._origem)}
-                                                            className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"
-                                                            title="Limpar da Lista"
+                                                            className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 hover:text-red-500 transition-all uppercase tracking-wider"
+                                                            title="Limpar Histórico"
                                                         >
-                                                            <Icons.Trash2 className="w-4 h-4" />
+                                                            <Icons.Trash2 className="w-3.5 h-3.5" /> Arquivar Registro
                                                         </button>
                                                     </div>
                                                 )}
@@ -6284,12 +6133,11 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
         </div>
     );
 };
-// =================================================================================
 
 // =================================================================================
 // COMPONENTE ADMIN: MARKETPLACE (PRODUTOS E PEDIDOS) - MULTIPLOS ARQUIVOS
 // =================================================================================
-const AdminMarketplaceTab = ({ db, theme, Icons, showNotification, requestConfirmation, uploadToCustomDrive, userRole, generalSettings, setGeneralSettings }) => {
+const AdminMarketplaceTab = ({ db, theme, showNotification, requestConfirmation, uploadToCustomDrive, userRole, generalSettings, setGeneralSettings }) => {
     
     const [activeSubTab, setActiveSubTab] = React.useState(() => {
         return sessionStorage.getItem('adminMarketplaceTab') || 'produtos';
@@ -6320,7 +6168,6 @@ const AdminMarketplaceTab = ({ db, theme, Icons, showNotification, requestConfir
     const [orders, setOrders] = React.useState([]);
     const [isLoadingOrders, setIsLoadingOrders] = React.useState(true);
 
-    // 👇 ESTADOS DE CATEGORIAS (AGORA DENTRO DO COMPONENTE!) 👇
     const [newCategory, setNewCategory] = React.useState('');
     const [editingCat, setEditingCat] = React.useState(null);
     const [isSavingCategory, setIsSavingCategory] = React.useState(false);
@@ -6645,7 +6492,6 @@ const AdminMarketplaceTab = ({ db, theme, Icons, showNotification, requestConfir
         return () => clearInterval(interval);
     }, [activeSubTab, generalSettings?.mercadoPagoAccessToken]);
 
-    // 👇 FUNÇÕES DE CATEGORIAS (AGORA DENTRO DO COMPONENTE) 👇
     const handleAddCategory = async (e) => {
         e.preventDefault();
         if (!newCategory.trim()) return;
@@ -6835,12 +6681,6 @@ const AdminMarketplaceTab = ({ db, theme, Icons, showNotification, requestConfir
                 </div>
             )}
 
-
-
-
-
-
-            
             {activeSubTab === 'categorias' && (
                 <div className={`${theme.card} p-6 rounded-xl shadow-sm border animate-fade-in`}>
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-slate-200 dark:border-slate-700 pb-4 gap-4">
@@ -7104,161 +6944,9 @@ const AdminMarketplaceTab = ({ db, theme, Icons, showNotification, requestConfir
                     </div>
                 </div>
             )}
-
-            {/* MODAL DE DETALHES DO CURSO/PRODUTO (DESIGN DE CARD PREMIUM) */}
-            {selectedItemDetail && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in" onClick={() => setSelectedItemDetail(null)}>
-                    <div 
-                        className={`${theme.card} w-full max-w-2xl max-h-[90vh] shadow-[0_0_50px_rgba(79,70,229,0.2)] border border-white/10 flex flex-col relative animate-scale-in overflow-hidden`} 
-                        onClick={e => e.stopPropagation()}
-                    >
-                        {/* Header do Card */}
-                        <div className="p-5 border-b border-white/5 flex items-center justify-between shrink-0 bg-slate-50 dark:bg-slate-900/80 backdrop-blur-xl">
-                            <div className="flex items-center gap-4">
-                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-2xl transform -rotate-3 ${selectedItemDetail._type === 'curso' ? 'bg-gradient-to-br from-indigo-600 to-indigo-800' : 'bg-gradient-to-br from-emerald-600 to-emerald-800'}`}>
-                                    {selectedItemDetail._type === 'curso' ? <Icons.BookOpen size={24}/> : <Icons.ShoppingBag size={24}/>}
-                                </div>
-                                <div>
-                                    <h3 className={`font-black text-sm md:text-base uppercase tracking-tighter ${theme.text}`}>Dossiê Estratégico</h3>
-                                    <p className="text-[10px] text-indigo-500 font-black uppercase tracking-widest flex items-center gap-1">
-                                        <Icons.CheckCircle size={10}/> Produto {selectedItemDetail._type} Ativo
-                                    </p>
-                                </div>
-                            </div>
-                            <button onClick={() => setSelectedItemDetail(null)} className="p-2.5 text-slate-400 hover:bg-red-500 hover:text-white rounded-2xl transition-all duration-300">
-                                <Icons.X size={24} />
-                            </button>
-                        </div>
-
-                        {/* Conteúdo Interno com Scroll */}
-                        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10 space-y-8">
-                            
-                            {/* Layout de Apresentação (Imagem + Info Rápida) */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-                                {/* Capa Visual */}
-                                <div className="relative aspect-square rounded-[2rem] overflow-hidden border-2 border-white/10 shadow-2xl bg-black/20 group">
-                                    <img 
-                                        src={selectedItemDetail.cover || (selectedItemDetail.images && selectedItemDetail.images[0]) || 'https://via.placeholder.com/400x400?text=Sem+Imagem'} 
-                                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                                        alt="Capa" 
-                                    />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
-                                    <div className="absolute bottom-4 left-4 right-4">
-                                        <span className="inline-block bg-white dark:bg-indigo-600 text-indigo-600 dark:text-white font-black text-xs px-4 py-2 rounded-xl shadow-2xl border border-white/20">
-                                            R$ {parseFloat(selectedItemDetail.price || 0).toFixed(2).replace('.',',')}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* Resumo Técnico */}
-                                <div className="space-y-6">
-                                    <div>
-                                        <h2 className={`text-2xl font-black leading-none tracking-tighter ${theme.text} mb-3 italic`}>{selectedItemDetail.title || selectedItemDetail.titulo}</h2>
-                                        <div className="w-12 h-1.5 bg-indigo-600 rounded-full mb-4"></div>
-                                        <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-[0.2em]">{selectedItemDetail.subtitle || 'Conteúdo de Alta Conversão'}</p>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 gap-3">
-                                        <div className="bg-slate-50 dark:bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sua Comissão</span>
-                                            <span className="font-black text-base text-emerald-500">{selectedItemDetail.affiliatePercent || 0}% <span className="text-[10px] opacity-60">Líquido</span></span>
-                                        </div>
-                                        <div className="bg-slate-50 dark:bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Categoria</span>
-                                            <span className={`font-bold text-xs ${theme.text}`}>{selectedItemDetail.category || selectedItemDetail.categoria || 'Geral'}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Descrição Detalhada */}
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center"><Icons.FileText size={16}/></div>
-                                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Copy de Venda</h4>
-                                </div>
-                                <div className={`text-sm leading-relaxed ${theme.text} whitespace-pre-wrap font-medium p-6 rounded-3xl border border-dashed border-indigo-500/20 bg-indigo-500/5`}>
-                                    {selectedItemDetail.checkoutDescription || selectedItemDetail.description || 'Nenhuma copy cadastrada para este produto.'}
-                                </div>
-                            </div>
-
-                            {/* Detalhes de Conteúdo (Só Cursos) */}
-                            {selectedItemDetail._type === 'curso' && selectedItemDetail.modulos && selectedItemDetail.modulos.length > 0 && (
-                                <div className="pt-4 space-y-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center"><Icons.LayoutList size={16}/></div>
-                                        <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Grade de Módulos</h4>
-                                    </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                        {selectedItemDetail.modulos.map((mod, i) => (
-                                            <div key={i} className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-white/5 rounded-2xl border border-transparent hover:border-indigo-500/30 transition-all group/mod">
-                                                <span className="text-[10px] font-black text-indigo-500 bg-indigo-500/10 w-6 h-6 rounded-lg flex items-center justify-center group-hover/mod:bg-indigo-500 group-hover/mod:text-white transition-colors">{i+1}</span>
-                                                <div className="min-w-0">
-                                                    <p className={`text-xs font-bold ${theme.text} truncate`}>{mod.titulo}</p>
-                                                    <p className="text-[9px] text-slate-500 font-bold uppercase">{mod.aulas?.length || 0} aulas</p>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Gamificação (Pontos) */}
-                            {(Number(selectedItemDetail.pointsReward) > 0 || Number(selectedItemDetail.pointsCost) > 0) && (
-                                <div className="p-6 rounded-3xl bg-gradient-to-br from-amber-500/10 to-transparent border border-amber-500/20">
-                                    <h5 className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em] mb-4">Mecânica de Gamificação</h5>
-                                    <div className="flex flex-col sm:flex-row gap-4">
-                                        <div className="flex-1 flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 flex items-center justify-center shadow-inner"><Icons.Plus size={18}/></div>
-                                            <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Ganha <span className="text-amber-500">{selectedItemDetail.pointsReward}</span> pts ao concluir</p>
-                                        </div>
-                                        <div className="flex-1 flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-500 flex items-center justify-center shadow-inner"><Icons.ShoppingBag size={18}/></div>
-                                            <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Custa <span className="text-indigo-500">{selectedItemDetail.pointsCost}</span> pts para resgate</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Ações do Card */}
-                        <div className="p-6 md:p-8 border-t border-white/5 shrink-0 bg-slate-50 dark:bg-slate-900 flex flex-col md:flex-row gap-4">
-                            <button 
-                                onClick={() => setSelectedItemDetail(null)}
-                                className="flex-1 py-4 text-slate-500 font-black text-xs uppercase tracking-widest hover:bg-slate-100 dark:hover:bg-white/5 rounded-2xl transition-all"
-                            >
-                                Fechar Dossiê
-                            </button>
-                            <button 
-                                onClick={() => {
-                                    const siteUrl = 'https://site-curso-cliente.vercel.app';
-                                    const link = selectedItemDetail._type === 'curso' 
-                                        ? `${siteUrl}/?id=${selectedItemDetail.id}&ref=${activeAffId}`
-                                        : `${siteUrl}/loja?product=${selectedItemDetail.id}&ref=${activeAffId}`;
-                                    
-                                    const fallback = () => {
-                                        const t = document.createElement("textarea"); t.value = link; t.style.position="fixed"; t.style.left="-9999px";
-                                        document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t);
-                                        showNotification("Link estratégico copiado!", "success");
-                                    };
-                                    if (navigator.clipboard && window.isSecureContext) {
-                                        navigator.clipboard.writeText(link).then(() => showNotification("Link estratégico copiado!", "success")).catch(fallback);
-                                    } else { fallback(); }
-                                }}
-                                className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-indigo-600/20 transition-all active:scale-95 flex items-center justify-center gap-3"
-                            >
-                                <Icons.Copy size={18}/> Copiar Link de Afiliado
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 };
-// =================================================================================
-// FIM DO COMPONENTE ADMIN: MARKETPLACE
-// =================================================================================
          
 
 
@@ -8905,7 +8593,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                 bannerURL: currentUser.bannerURL || ''
             });
         }
-    }, [currentUser]); // Removido subTab para evitar resets desnecessários
+    }, [currentUser]); 
 
     const handleProfileMediaUpload = async (file, type) => {
         if (!file) return;
@@ -8948,10 +8636,11 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
         }
     };
 
-    // --- BUSCA PRODUTOS DO MARKETPLACE (Otimizado: Pré-carregamento) ---
+    // --- BUSCA PRODUTOS DO MARKETPLACE (LIVRE DE FILTROS PARA MOSTRAR TODOS) ---
     useEffect(() => {
         if (!db) return;
-        const q = query(collection(db, "marketplace_products"), where("active", "==", true));
+        // Puxa literalmente TODOS os produtos da loja, sem filtro de "ativo"
+        const q = query(collection(db, "marketplace_products"));
         const unsub = onSnapshot(q, snap => {
             setProducts(snap.docs.map(d => ({id: d.id, ...d.data()})));
         });
@@ -9026,7 +8715,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
         const recognition = new SpeechRecognition();
         recognition.lang = 'pt-PT';
         recognition.interimResults = true;
-        recognition.continuous = true; // Mantém a escuta ativa mesmo com pausas
+        recognition.continuous = true; 
 
         recognition.onstart = () => setIsListeningSTT(true);
         recognition.onend = () => setIsListeningSTT(false);
@@ -9059,7 +8748,6 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
         setIsIaThinking(true);
 
         try {
-            // 1. DADOS FILTRADOS E CROSS-REFERENCE (CONTEÚDO + FINANCEIRO + VISÃO GERAL)
             let dossieContexto = "";
             let linksContexto = "";
             let analiseDados = "";
@@ -9068,13 +8756,11 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
             if (iaContextType === 'curso' && iaContextItem) {
                 const item = cursos.find(c => c.id === iaContextItem);
                 if (item) {
-                    // CÁLCULO DE CROSS-TAB (DADOS DA VISÃO GERAL/FINANCEIRO)
                     const aprovados = (pagamentos || []).filter(v => ['pago', 'aprovado', 'concluído', 'approved'].includes(String(v.status).toLowerCase()));
                     const itemSales = aprovados.filter(p => p.courseId === iaContextItem);
                     const itemRevenue = itemSales.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
                     const studentCount = itemSales.length;
                     
-                    // RANKING DE POPULARIDADE EM TEMPO REAL
                     const rankingMap = {};
                     aprovados.forEach(v => { rankingMap[v.courseId] = (rankingMap[v.courseId] || 0) + 1; });
                     const sortedRank = Object.entries(rankingMap).sort((a,b) => b[1] - a[1]);
@@ -9123,9 +8809,8 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                     linksContexto = `[LINK DE LOJA]: https://site-curso-cliente.vercel.app/loja?product=${item.id}&ref=${activeAffId}`;
                 }
             } else {
-                // Modo Geral
                 dossieContexto = (cursos || []).slice(0, 10).map(c => `CURSO: ${c.title}`).join(', ');
-                analiseDados = `Cursos Populares: ${stats.topProds.map(p => p[0]).join(', ')} | Atividade Recente: ${stats.recent.map(a => a.userName).join(', ')}`;
+                analiseDados = `Use esses dados globais de contexto de plataforma.`;
                 linksContexto = "Forneça os links gerais de afiliado se solicitado.";
             }
 
@@ -9166,7 +8851,6 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
 
             setIaMessages(newMessages);
 
-            // Persistência no Histórico
             if (activeSessionId) {
                 await updateDoc(doc(db, "ia_sales_history", activeSessionId), {
                     messages: newMessages,
@@ -9190,16 +8874,19 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
         }
     };
 
+    const handleNewChat = () => {
+        setIaMessages([{ role: 'assistant', content: 'Nova sessão iniciada. O que vamos vender hoje? Posso buscar qualquer produto no seu catálogo ou dar dicas de fechamento.' }]);
+        setActiveSessionId(null);
+    };
+
     // --- MOTOR DE DADOS DO DASHBOARD DE PRODUTOS/AFILIADOS ---
     const stats = useMemo(() => {
         const todasVendas = [...(pagamentos || []), ...(vendasLoja || [])];
-        // Se for afiliado, filtra apenas as dele. Se for admin, vê todas as vendas via link.
         const vRef = todasVendas.filter(v => currentUser?.role === 'affiliate' ? v.ref === activeAffId : !!v.ref);
         const aprovadas = vRef.filter(v => ['pago', 'aprovado', 'concluído', 'approved'].includes(String(v.status).toLowerCase()));
         
         const totalVolume = aprovadas.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
         
-        // Histórico de vendas para o gráfico
         const chartData = {};
         aprovadas.forEach(v => {
             const date = v.createdAt?.seconds ? new Date(v.createdAt.seconds * 1000) : new Date();
@@ -9207,7 +8894,6 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
             chartData[label] = (chartData[label] || 0) + (parseFloat(v.valor || v.price) || 0);
         });
 
-        // Garante que o gráfico sempre tenha 7 pontos para ser "bonito" mesmo vazio
         const last7Days = [];
         for (let i = 6; i >= 0; i--) {
             const d = new Date();
@@ -9218,7 +8904,6 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
 
         const finalChart = last7Days;
 
-        // Processamento Detalhado para a Tabela
         const detailedSales = aprovadas.map(v => {
             const course = cursos.find(c => c.id === v.courseId);
             const commPercent = course?.affiliatePercent || 0;
@@ -9233,7 +8918,6 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
             };
         });
 
-        // Top Produtos Vendidos via Link
         const prodCount = {};
         aprovadas.forEach(v => {
             const title = v.productTitle || v.courseTitle || 'Item';
@@ -9302,29 +8986,29 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                                         </div>
                                     </div>
                                     <input type="file" className="hidden" accept="image/*" onChange={(e) => handleProfileMediaUpload(e.target.files[0], 'banner')} disabled={isUploadingBanner}/>
-                                </label>
+                        </label>
                                 
-                                <div className="px-6 md:px-12 flex flex-col md:flex-row items-center md:items-end gap-6 -mt-16 md:-mt-24 relative z-10">
-                                    {/* Grande Avatar */}
-                                    <div className="relative group/avatar">
-                                        <label className="block w-32 h-32 md:w-48 md:h-48 rounded-[2rem] bg-[#0a0a0f] p-1.5 shadow-2xl border border-white/10 group-hover:scale-105 transition-transform duration-500 cursor-pointer overflow-hidden">
-                                            <div className="w-full h-full rounded-[1.8rem] bg-gradient-to-br from-indigo-500 to-purple-700 flex items-center justify-center text-white text-5xl md:text-7xl font-black shadow-inner overflow-hidden">
-                                                {profileForm.photoURL ? (
-                                                    <img src={profileForm.photoURL} className="w-full h-full object-cover" alt="Avatar" />
-                                                ) : (
-                                                    (currentUser?.name || currentUser?.nome || 'P').charAt(0).toUpperCase()
-                                                )}
-                                            </div>
-                                            <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-opacity rounded-[1.8rem]">
-                                                {isUploadingAvatar ? <Icons.Loading className="w-6 h-6 animate-spin text-white"/> : <Icons.Edit className="w-6 h-6 text-white"/>}
-                                                <span className="text-[8px] font-black text-white mt-1 uppercase">Trocar</span>
-                                            </div>
-                                            <input type="file" className="hidden" accept="image/*" onChange={(e) => handleProfileMediaUpload(e.target.files[0], 'avatar')} disabled={isUploadingAvatar}/>
-                                        </label>
-                                        <div className="absolute bottom-4 -right-2 w-8 h-8 bg-emerald-500 rounded-full border-4 border-[#0a0a0f] flex items-center justify-center shadow-lg" title="Perfil Verificado">
-                                            <Icons.Check size={14} className="text-white" />
-                                        </div>
+                        <div className="px-6 md:px-12 flex flex-col md:flex-row items-center md:items-end gap-6 -mt-16 md:-mt-24 relative z-10">
+                            {/* Grande Avatar */}
+                            <div className="relative group/avatar">
+                                <label className="block w-32 h-32 md:w-48 md:h-48 rounded-[2rem] bg-[#0a0a0f] p-1.5 shadow-2xl border border-white/10 group-hover:scale-105 transition-transform duration-500 cursor-pointer overflow-hidden">
+                                    <div className="w-full h-full rounded-[1.8rem] bg-gradient-to-br from-indigo-500 to-purple-700 flex items-center justify-center text-white text-5xl md:text-7xl font-black shadow-inner overflow-hidden">
+                                        {profileForm.photoURL ? (
+                                            <img src={profileForm.photoURL} className="w-full h-full object-cover" alt="Avatar" />
+                                        ) : (
+                                            (currentUser?.name || currentUser?.nome || 'P').charAt(0).toUpperCase()
+                                        )}
                                     </div>
+                                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-opacity rounded-[1.8rem]">
+                                        {isUploadingAvatar ? <Icons.Loading className="w-6 h-6 animate-spin text-white"/> : <Icons.Edit className="w-6 h-6 text-white"/>}
+                                        <span className="text-[8px] font-black text-white mt-1 uppercase">Trocar</span>
+                                    </div>
+                                    <input type="file" className="hidden" accept="image/*" onChange={(e) => handleProfileMediaUpload(e.target.files[0], 'avatar')} disabled={isUploadingAvatar}/>
+                                </label>
+                                <div className="absolute bottom-4 -right-2 w-8 h-8 bg-emerald-500 rounded-full border-4 border-[#0a0a0f] flex items-center justify-center shadow-lg" title="Perfil Verificado">
+                                    <Icons.Check size={14} className="text-white" />
+                                </div>
+                            </div>
 
                             <div className="text-center md:text-left flex-1 pb-4">
                                 <h3 className={`text-2xl md:text-4xl font-black tracking-tight ${theme.text}`}>{currentUser?.name || currentUser?.nome || 'Parceiro Elite'}</h3>
@@ -9345,27 +9029,23 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                                         btn.disabled = true;
                                         
                                         try {
-                                            // 1. Localiza o documento na coleção 'affiliates'
                                             const affQuery = query(collection(db, "affiliates"), where("uid", "==", (currentUser.uid || currentUser.id)));
                                             const snap = await getDocs(affQuery);
                                             
                                             if(!snap.empty) {
-                                                // 2. Atualiza os dados usando o estado controlado
                                                 const updatedName = profileForm.name.trim();
                                                 const affDocRef = doc(db, "affiliates", snap.docs[0].id);
                                                 const authUid = currentUser.uid || currentUser.id;
 
-                                                // Atualiza na coleção de Afiliados (Dados de Venda)
                                                 await updateDoc(affDocRef, {
                                                     name: updatedName,
-                                                    nome: updatedName, // Garante compatibilidade entre campos
+                                                    nome: updatedName, 
                                                     pixKey: profileForm.pixKey,
                                                     whatsapp: profileForm.whatsapp,
                                                     bio: profileForm.bio,
                                                     updatedAt: serverTimestamp()
                                                 });
 
-                                                // Sincroniza com a coleção de Usuários (Dados do Portal/Login)
                                                 if (authUid) {
                                                     try {
                                                         const userDocRef = doc(db, "users", authUid);
@@ -9878,6 +9558,131 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                             </div>
                         </div>
                     </div>
+
+                    {/* NOVA TABELA DE DETALHAMENTO DE VENDAS */}
+                    <div className={`${theme.card} border shadow-sm overflow-hidden`}>
+                        <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex justify-between items-center">
+                            <h3 className={`text-sm font-bold ${theme.text} uppercase tracking-wider flex items-center gap-2`}>
+                                <Icons.LayoutList className="text-indigo-500" size={16} /> Extrato Detalhado de Conversões
+                            </h3>
+                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full">{stats.allDetailed.length} Transações</span>
+                        </div>
+                        <div className="overflow-x-auto custom-scrollbar">
+                            <table className="w-full text-left text-xs md:text-sm">
+                                <thead className={`${theme.tableHeader} border-b border-slate-200 dark:border-slate-800`}>
+                                    <tr>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px]">Data/Hora</th>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px]">Cliente</th>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px]">Produto/Curso</th>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px]">Valor Venda</th>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-right">Minha Comissão</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                    {stats.allDetailed.length === 0 ? (
+                                        <tr>
+                                            <td colSpan="5" className="p-12 text-center text-slate-400 italic">Nenhum registro de venda encontrado para este período.</td>
+                                        </tr>
+                                    ) : (
+                                        stats.allDetailed.map((sale, i) => (
+                                            <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                                <td className="p-4 font-mono text-[10px] text-slate-500">
+                                                    {sale.createdAt?.seconds ? new Date(sale.createdAt.seconds * 1000).toLocaleString('pt-BR') : 'Agora'}
+                                                </td>
+                                                <td className="p-4">
+                                                    <p className={`font-bold ${theme.text}`}>{sale.userName}</p>
+                                                    <p className="text-[10px] text-slate-400">{sale.userEmail}</p>
+                                                </td>
+                                                <td className="p-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={`w-2 h-2 rounded-full ${sale.productTitle ? 'bg-pink-500' : 'bg-indigo-500'}`}></span>
+                                                        <p className={`font-medium ${theme.text}`}>{sale.productTitle || sale.courseTitle}</p>
+                                                    </div>
+                                                </td>
+                                                <td className="p-4 font-medium text-slate-600 dark:text-slate-400">
+                                                    R$ {sale.displayPrice.toFixed(2).replace('.', ',')}
+                                                </td>
+                                                <td className="p-4 text-right">
+                                                    <div className="flex flex-col items-end">
+                                                        <span className="font-black text-emerald-500 text-base">R$ {sale.displayComm.toFixed(2).replace('.', ',')}</span>
+                                                        <span className="text-[9px] font-bold text-slate-400 uppercase">{sale.commPercent}% de taxa</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    {/* TABELA DE REGISTRO DE VENDAS PERMANENTE (VISÍVEL MESMO SEM DADOS) */}
+                    <div className={`${theme.card} border shadow-sm overflow-hidden animate-fade-in`}>
+                        <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex justify-between items-center">
+                            <div>
+                                <h3 className={`text-sm font-bold ${theme.text} uppercase tracking-wider flex items-center gap-2`}>
+                                    <Icons.LayoutList className="text-indigo-500" size={16} /> Registro Geral de Vendas e Comissões
+                                </h3>
+                                <p className="text-[10px] text-slate-400 mt-0.5 uppercase font-bold tracking-widest">Sincronização em tempo real ativada</p>
+                            </div>
+                            <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${stats.allDetailed.length > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-400'}`}>
+                                {stats.allDetailed.length} Transações Detectadas
+                            </span>
+                        </div>
+                        <div className="overflow-x-auto custom-scrollbar">
+                            <table className="w-full text-left text-xs md:text-sm border-collapse">
+                                <thead className={`${theme.tableHeader} border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80`}>
+                                    <tr>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Data / Horário</th>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Cliente Adquirente</th>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Produto / Origem</th>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500">Preço Bruto</th>
+                                        <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-slate-500 text-right">Comissão Líquida</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                    {stats.allDetailed.length === 0 ? (
+                                        <tr>
+                                            <td colSpan="5" className="p-20 text-center">
+                                                <div className="flex flex-col items-center justify-center opacity-30">
+                                                    <Icons.ShoppingBag size={48} className="mb-3 text-slate-400" />
+                                                    <p className="text-sm font-bold uppercase tracking-widest">Aguardando as primeiras vendas</p>
+                                                    <p className="text-xs mt-1">Os dados aparecerão aqui automaticamente após a aprovação.</p>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        stats.allDetailed.map((sale, i) => (
+                                            <tr key={sale.id || i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+                                                <td className="p-4 font-mono text-[10px] text-slate-500">
+                                                    {sale.createdAt?.seconds ? new Date(sale.createdAt.seconds * 1000).toLocaleString('pt-PT') : 'Agora'}
+                                                </td>
+                                                <td className="p-4">
+                                                    <p className={`font-bold ${theme.text} group-hover:text-indigo-500 transition-colors`}>{sale.userName}</p>
+                                                    <p className="text-[10px] text-slate-400 font-medium">{sale.userEmail}</p>
+                                                </td>
+                                                <td className="p-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className={`w-2 h-2 rounded-full ${sale.productTitle ? 'bg-pink-500 shadow-[0_0_8px_rgba(236,72,153,0.5)]' : 'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.5)]'}`}></div>
+                                                        <p className={`font-bold ${theme.text} text-xs`}>{sale.productTitle || sale.courseTitle || 'Produto VIP'}</p>
+                                                    </div>
+                                                </td>
+                                                <td className="p-4 font-bold text-slate-600 dark:text-slate-400">
+                                                    R$ {sale.displayPrice.toFixed(2).replace('.', ',')}
+                                                </td>
+                                                <td className="p-4 text-right">
+                                                    <div className="flex flex-col items-end">
+                                                        <span className="font-black text-emerald-500 text-base">R$ {sale.displayComm.toFixed(2).replace('.', ',')}</span>
+                                                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{sale.commPercent}% de comissão</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -9895,72 +9700,79 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         {linkType === 'cursos' ? (
-                            cursos.filter(c => c.ativo && Number(c.affiliatePercent) > 0).map(curso => {
-                                const qMark = String.fromCharCode(63);
-                                const andSym = String.fromCharCode(38);
-                                const siteBaseUrl = 'https://site-curso-cliente.vercel.app';
-                                const affUrl = activeAffId 
-                                    ? `${siteBaseUrl}/${qMark}id=${curso.id}${andSym}ref=${activeAffId}`
-                                    : 'Gerando link...';
+                            cursos.length === 0 ? (
+                                <div className="col-span-full py-16 text-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl bg-slate-50/50 dark:bg-slate-800/30">
+                                    <Icons.BookOpen className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                                    <p className={`text-sm font-bold ${theme.text}`}>Nenhum curso cadastrado.</p>
+                                </div>
+                            ) : (
+                                cursos.map(curso => {
+                                    const qMark = String.fromCharCode(63);
+                                    const andSym = String.fromCharCode(38);
+                                    const siteBaseUrl = 'https://site-curso-cliente.vercel.app';
+                                    const affUrl = activeAffId 
+                                        ? `${siteBaseUrl}/${qMark}id=${curso.id}${andSym}ref=${activeAffId}`
+                                        : 'Gerando link...';
 
-                                return (
-                                    <div key={curso.id} onClick={() => setSelectedItemDetail({...curso, _type: 'curso'})} className={`${theme.card} rounded-2xl border shadow-sm overflow-hidden flex flex-col group hover:border-indigo-500/50 transition-all cursor-pointer`}>
-                                        <div className="h-32 bg-slate-200 dark:bg-slate-800 relative overflow-hidden">
-                                            {curso.cover ? (
-                                                <img src={curso.cover} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
-                                            ) : (
-                                                <div className="w-full h-full flex items-center justify-center text-slate-400"><Icons.Image size={24}/></div>
-                                            )}
-                                            <div className="absolute top-2 right-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded font-bold backdrop-blur-sm border border-white/10 flex items-center gap-1.5">
-                                                <span>R$ {parseFloat(curso.price || 0).toFixed(2)}</span>
-                                                <span className="w-px h-2.5 bg-white/20"></span>
-                                                <span className="text-indigo-400">{curso.affiliatePercent || 0}%</span>
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="p-4 flex flex-col flex-1">
-                                            <h4 className={`font-bold text-sm line-clamp-1 ${theme.text} mb-1`}>{curso.title || curso.titulo}</h4>
-                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2 mb-3 h-8 leading-tight italic">
-                                                {curso.description || 'Clique para ver os detalhes completos deste curso.'}
-                                            </p>
-                                            
-                                            <div className="mt-auto space-y-3">
-                                                <div className="bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
-                                                    <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Link Direto:</p>
-                                                    <p className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 break-all line-clamp-1 opacity-70">
-                                                        {affUrl}
-                                                    </p>
+                                    return (
+                                        <div key={curso.id} onClick={() => setSelectedItemDetail({...curso, _type: 'curso'})} className={`${theme.card} rounded-2xl border shadow-sm overflow-hidden flex flex-col group hover:border-indigo-500/50 transition-all cursor-pointer`}>
+                                            <div className="h-32 bg-slate-200 dark:bg-slate-800 relative overflow-hidden">
+                                                {curso.cover ? (
+                                                    <img src={curso.cover} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center text-slate-400"><Icons.Image size={24}/></div>
+                                                )}
+                                                <div className="absolute top-2 right-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded font-bold backdrop-blur-sm border border-white/10 flex items-center gap-1.5">
+                                                    <span>R$ {parseFloat(curso.price || 0).toFixed(2)}</span>
+                                                    <span className="w-px h-2.5 bg-white/20"></span>
+                                                    <span className="text-indigo-400">{curso.affiliatePercent || 0}%</span>
                                                 </div>
-                                                <button 
+                                            </div>
+                                            
+                                            <div className="p-4 flex flex-col flex-1">
+                                                <h4 className={`font-bold text-sm line-clamp-1 ${theme.text} mb-1`}>{curso.title || curso.titulo}</h4>
+                                                <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2 mb-3 h-8 leading-tight italic">
+                                                    {curso.description || 'Clique para ver os detalhes completos deste curso.'}
+                                                </p>
+                                                
+                                                <div className="mt-auto space-y-3">
+                                                    <div className="bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                                                        <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Link Direto:</p>
+                                                        <p className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 break-all line-clamp-1 opacity-70">
+                                                            {affUrl}
+                                                        </p>
+                                                    </div>
+                                                    <button 
                                                         disabled={!activeAffId}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                        const fallback = () => {
-                                                            const t = document.createElement("textarea"); t.value = affUrl; t.style.position="fixed"; t.style.left="-9999px";
-                                                            document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t);
-                                                            showNotification("Link copiado!", "success");
-                                                        };
-                                                        if (navigator.clipboard && window.isSecureContext) {
-                                                            navigator.clipboard.writeText(affUrl).then(() => showNotification("Link copiado!", "success")).catch(fallback);
-                                                        } else { fallback(); }
-                                                    }}
-                                                    className={`w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${!activeAffId ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/20 active:scale-95'}`}
-                                                >
-                                                    <Icons.Link size={14}/> Copiar Link
-                                                </button>
+                                                            const fallback = () => {
+                                                                const t = document.createElement("textarea"); t.value = affUrl; t.style.position="fixed"; t.style.left="-9999px";
+                                                                document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t);
+                                                                showNotification("Link copiado!", "success");
+                                                            };
+                                                            if (navigator.clipboard && window.isSecureContext) {
+                                                                navigator.clipboard.writeText(affUrl).then(() => showNotification("Link copiado!", "success")).catch(fallback);
+                                                            } else { fallback(); }
+                                                        }}
+                                                        className={`w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${!activeAffId ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/20 active:scale-95'}`}
+                                                    >
+                                                        <Icons.Link size={14}/> Copiar Link
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                );
-                            })
+                                    );
+                                })
+                            )
                         ) : (
                             products.length === 0 ? (
                                 <div className="col-span-full py-16 text-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl bg-slate-50/50 dark:bg-slate-800/30">
                                     <Icons.ShoppingBag className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-                                    <p className={`text-sm font-bold ${theme.text}`}>Nenhum produto com comissão ativa na loja.</p>
+                                    <p className={`text-sm font-bold ${theme.text}`}>Nenhum produto cadastrado na loja.</p>
                                 </div>
                             ) : (
-                                products.filter(p => Number(p.affiliatePercent) > 0).map(product => {
+                                products.map(product => {
                                     const qMark = String.fromCharCode(63);
                                     const andSym = String.fromCharCode(38);
                                     const siteBaseUrl = 'https://site-curso-cliente.vercel.app';
@@ -9993,9 +9805,9 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                                                     <div className="bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
                                                         <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Link do Produto:</p>
                                                         <p className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 break-all line-clamp-1 opacity-70">
-                                                        {affUrl}
-                                                    </p>
-                                                </div>
+                                                            {affUrl}
+                                                        </p>
+                                                    </div>
 
                                                     <button 
                                                         disabled={!activeAffId}
@@ -10021,6 +9833,157 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                                 })
                             )
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL DE DETALHES DO CURSO/PRODUTO (DESIGN DE CARD PREMIUM) */}
+            {selectedItemDetail && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in" onClick={() => setSelectedItemDetail(null)}>
+                    <div 
+                        className={`${theme.card} w-full max-w-2xl max-h-[90vh] shadow-[0_0_50px_rgba(79,70,229,0.2)] border border-white/10 flex flex-col relative animate-scale-in overflow-hidden`} 
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Header do Card */}
+                        <div className="p-5 border-b border-white/5 flex items-center justify-between shrink-0 bg-slate-50 dark:bg-slate-900/80 backdrop-blur-xl">
+                            <div className="flex items-center gap-4">
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-2xl transform -rotate-3 ${selectedItemDetail._type === 'curso' ? 'bg-gradient-to-br from-indigo-600 to-indigo-800' : 'bg-gradient-to-br from-emerald-600 to-emerald-800'}`}>
+                                    {selectedItemDetail._type === 'curso' ? <Icons.BookOpen size={24}/> : <Icons.ShoppingBag size={24}/>}
+                                </div>
+                                <div>
+                                    <h3 className={`font-black text-sm md:text-base uppercase tracking-tighter ${theme.text}`}>Dossiê Estratégico</h3>
+                                    <p className="text-[10px] text-indigo-500 font-black uppercase tracking-widest flex items-center gap-1">
+                                        <Icons.CheckCircle size={10}/> Produto {selectedItemDetail._type} Ativo
+                                    </p>
+                                </div>
+                            </div>
+                            <button onClick={() => setSelectedItemDetail(null)} className="p-2.5 text-slate-400 hover:bg-red-500 hover:text-white rounded-2xl transition-all duration-300">
+                                <Icons.X size={24} />
+                            </button>
+                        </div>
+
+                        {/* Conteúdo Interno com Scroll */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10 space-y-8">
+                            
+                            {/* Layout de Apresentação (Imagem + Info Rápida) */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                                {/* Capa Visual */}
+                                <div className="relative aspect-square rounded-[2rem] overflow-hidden border-2 border-white/10 shadow-2xl bg-black/20 group">
+                                    <img 
+                                        src={selectedItemDetail.cover || (selectedItemDetail.images && selectedItemDetail.images[0]) || 'https://via.placeholder.com/400x400?text=Sem+Imagem'} 
+                                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                                        alt="Capa" 
+                                    />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
+                                    <div className="absolute bottom-4 left-4 right-4">
+                                        <span className="inline-block bg-white dark:bg-indigo-600 text-indigo-600 dark:text-white font-black text-xs px-4 py-2 rounded-xl shadow-2xl border border-white/20">
+                                            R$ {parseFloat(selectedItemDetail.price || 0).toFixed(2).replace('.',',')}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Resumo Técnico */}
+                                <div className="space-y-6">
+                                    <div>
+                                        <h2 className={`text-2xl font-black leading-none tracking-tighter ${theme.text} mb-3 italic`}>{selectedItemDetail.title || selectedItemDetail.titulo}</h2>
+                                        <div className="w-12 h-1.5 bg-indigo-600 rounded-full mb-4"></div>
+                                        <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-[0.2em]">{selectedItemDetail.subtitle || 'Conteúdo de Alta Conversão'}</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-3">
+                                        <div className="bg-slate-50 dark:bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sua Comissão</span>
+                                            <span className="font-black text-base text-emerald-500">{selectedItemDetail.affiliatePercent || 0}% <span className="text-[10px] opacity-60">Líquido</span></span>
+                                        </div>
+                                        <div className="bg-slate-50 dark:bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Categoria</span>
+                                            <span className={`font-bold text-xs ${theme.text}`}>{selectedItemDetail.category || selectedItemDetail.categoria || 'Geral'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Descrição Detalhada */}
+                            <div className="space-y-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center"><Icons.FileText size={16}/></div>
+                                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Copy de Venda</h4>
+                                </div>
+                                <div className={`text-sm leading-relaxed ${theme.text} whitespace-pre-wrap font-medium p-6 rounded-3xl border border-dashed border-indigo-500/20 bg-indigo-500/5`}>
+                                    {selectedItemDetail.checkoutDescription || selectedItemDetail.description || 'Nenhuma copy cadastrada para este produto.'}
+                                </div>
+                            </div>
+
+                            {/* Detalhes de Conteúdo (Só Cursos) */}
+                            {selectedItemDetail._type === 'curso' && selectedItemDetail.modulos && selectedItemDetail.modulos.length > 0 && (
+                                <div className="pt-4 space-y-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center"><Icons.LayoutList size={16}/></div>
+                                        <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Grade de Módulos</h4>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {selectedItemDetail.modulos.map((mod, i) => (
+                                            <div key={i} className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-white/5 rounded-2xl border border-transparent hover:border-indigo-500/30 transition-all group/mod">
+                                                <span className="text-[10px] font-black text-indigo-500 bg-indigo-500/10 w-6 h-6 rounded-lg flex items-center justify-center group-hover/mod:bg-indigo-500 group-hover/mod:text-white transition-colors">{i+1}</span>
+                                                <div className="min-w-0">
+                                                    <p className={`text-xs font-bold ${theme.text} truncate`}>{mod.titulo}</p>
+                                                    <p className="text-[9px] text-slate-500 font-bold uppercase">{mod.aulas?.length || 0} aulas</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Gamificação (Pontos) */}
+                            {(Number(selectedItemDetail.pointsReward) > 0 || Number(selectedItemDetail.pointsCost) > 0) && (
+                                <div className="p-6 rounded-3xl bg-gradient-to-br from-amber-500/10 to-transparent border border-amber-500/20">
+                                    <h5 className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em] mb-4">Mecânica de Gamificação</h5>
+                                    <div className="flex flex-col sm:flex-row gap-4">
+                                        <div className="flex-1 flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 flex items-center justify-center shadow-inner"><Icons.Plus size={18}/></div>
+                                            <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Ganha <span className="text-amber-500">{selectedItemDetail.pointsReward}</span> pts ao concluir</p>
+                                        </div>
+                                        <div className="flex-1 flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-500 flex items-center justify-center shadow-inner"><Icons.ShoppingBag size={18}/></div>
+                                            <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Custa <span className="text-indigo-500">{selectedItemDetail.pointsCost}</span> pts para resgate</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Ações do Card */}
+                        <div className="p-6 md:p-8 border-t border-white/5 shrink-0 bg-slate-50 dark:bg-slate-900 flex flex-col md:flex-row gap-4">
+                            <button 
+                                onClick={() => setSelectedItemDetail(null)}
+                                className="flex-1 py-4 text-slate-500 font-black text-xs uppercase tracking-widest hover:bg-slate-100 dark:hover:bg-white/5 rounded-2xl transition-all"
+                            >
+                                Fechar Dossiê
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    const siteUrl = 'https://site-curso-cliente.vercel.app';
+                                    const qMark = String.fromCharCode(63);
+                                    const andSym = String.fromCharCode(38);
+                                    const link = selectedItemDetail._type === 'curso' 
+                                        ? `${siteUrl}/${qMark}id=${selectedItemDetail.id}${andSym}ref=${activeAffId}`
+                                        : `${siteUrl}/loja${qMark}product=${selectedItemDetail.id}${andSym}ref=${activeAffId}`;
+                                    
+                                    const fallback = () => {
+                                        const t = document.createElement("textarea"); t.value = link; t.style.position="fixed"; t.style.left="-9999px";
+                                        document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t);
+                                        showNotification("Link estratégico copiado!", "success");
+                                    };
+                                    if (navigator.clipboard && window.isSecureContext) {
+                                        navigator.clipboard.writeText(link).then(() => showNotification("Link estratégico copiado!", "success")).catch(fallback);
+                                    } else { fallback(); }
+                                }}
+                                className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-indigo-600/20 transition-all active:scale-95 flex items-center justify-center gap-3"
+                            >
+                                <Icons.Copy size={18}/> Copiar Link de Afiliado
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
