@@ -1431,29 +1431,28 @@ const AdminPointsTab = ({ db, theme, Icons, showNotification, requestConfirmatio
         
 
 // Função para descobrir se o link é Vídeo ou Imagem
-
 const getMediaType = (url) => {
-
     if (!url) return 'none';
-
-    // Pega a extensão do arquivo (ex: .png, .mp4) ignorando query params
-
+    
+    const lowerUrl = url.toLowerCase();
+    
+    // 1. MÁGICA: Checa se é um link de Streaming (YouTube ou Vimeo)
+    if (lowerUrl.includes('youtube.com') || lowerUrl.includes('youtu.be') || lowerUrl.includes('vimeo.com')) {
+        return 'video';
+    }
+    
+    // 2. Checa por extensões de arquivo normais (uploads próprios)
     const cleanUrl = url.split('?')[0]; 
-
     const extension = cleanUrl.split('.').pop().toLowerCase();
-
     
-
     const videoExts = ['mp4', 'webm', 'ogg', 'mov', 'mkv'];
-
     const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
-
     
-
     if (videoExts.includes(extension)) return 'video';
-
-    return 'image'; // Assume imagem por padrão se não for vídeo
-
+    if (imageExts.includes(extension)) return 'image';
+    
+    // 3. Fallback inteligente
+    return 'arquivo'; 
 };
 
         
