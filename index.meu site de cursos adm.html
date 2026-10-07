@@ -853,60 +853,14 @@ if(_isIos && !_isStandalone){
         }
         
         // --- CONFIGURAÇÃO FIREBASE ---
-        // === CONEXÃO CENTRAL: edite somente esta URL ao mudar o backend ===
-const PLATFORM_BACKEND_URL = 'https://meu-backend-ia.vercel.app';
-const platformNativeFetch = window.fetch.bind(window);
-let PLATFORM_RUNTIME;
-try {
-    const response = await platformNativeFetch(PLATFORM_BACKEND_URL + '/api/platform/runtime', {cache:'no-store', signal:AbortSignal.timeout(15000)});
-    if (!response.ok) throw new Error('Configuração central indisponível.');
-    PLATFORM_RUNTIME = await response.json();
-    if (!PLATFORM_RUNTIME.firebase?.projectId || !PLATFORM_RUNTIME.firebase?.apiKey) throw new Error('Configuração central inválida.');
-} catch (error) {
-    const root = document.getElementById('root');
-    if (root) { root.textContent='Não foi possível conectar à plataforma. Tente recarregar a página. Se o problema persistir, contate o suporte.'; root.style.cssText='padding:40px;color:#fff;background:#111;min-height:100vh;font:18px sans-serif'; }
-    throw error;
-}
-const firebaseConfig = PLATFORM_RUNTIME.firebase;
-const platformApi = async (path, body, method = body === undefined ? 'GET' : 'POST') => {
-    if (!auth?.currentUser) throw new Error('Entre na sua conta para continuar.');
-    const token = await auth.currentUser.getIdToken();
-    const response = await platformNativeFetch(PLATFORM_BACKEND_URL + path, {method, headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
-    const data = await response.json().catch(()=>({error:'Resposta inválida do servidor.'}));
-    if (!response.ok) throw new Error(data.error || 'Não foi possível concluir a operação.');
-    return data;
-};
-// Encaminha somente chamadas ao Mercado Pago; nenhuma chave privada sai do servidor.
-window.fetch = async (input, options = {}) => {
-    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
-    let url; try { url = new URL(raw, window.location.href); } catch (_) { return platformNativeFetch(input, options); }
-    if (url.origin !== 'https://api.mercadopago.com') return platformNativeFetch(input, options);
-    try {
-        const data = await platformApi('/api/integrations/mercadopago', {path:url.pathname+url.search,method:options.method||'GET',body:options.body?JSON.parse(options.body):undefined});
-        return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});
-    } catch(error) { return new Response(JSON.stringify({error:error.message}),{status:400,headers:{'Content-Type':'application/json'}}); }
-};
-const securePlatformUpload = async (file, folder = 'Community/') => {
-    if (!file) return null;
-    if (isConversationUpload(folder)) await assertConversationUploads();
-    const contentType = (file.type || 'application/octet-stream').split(';')[0];
-    const signed = await platformApi('/api/integrations/r2/upload', {name:file.name||'arquivo',type:contentType,size:file.size,folder});
-    const controller = new AbortController();
-    const stop = watchConversationUpload(controller, folder);
-    try {
-        const response = await platformNativeFetch(signed.uploadUrl, {method:'PUT',headers:{'Content-Type':contentType},body:file,signal:controller.signal});
-        if (!response.ok) throw new Error('Não foi possível enviar o arquivo. Verifique o CORS do bucket e tente novamente.');
-        return {url:signed.url,name:signed.name,type:contentType.startsWith('video/')?'video':contentType.startsWith('audio/')?'audio':contentType.startsWith('image/')?'image':'file'};
-    } finally { stop(); }
-};
-const useProgrammerAccess = () => {
-    const [allowed,setAllowed] = useState(false);
-    useEffect(()=> { let version=0; const off=onAuthStateChanged(auth,async user=>{const current=++version;setAllowed(false);if(!user)return;try {const token=await user.getIdTokenResult();if(current===version)setAllowed(token.claims.programmer===true);}catch(_){}});return ()=>{version++;off();}; },[]);
-    return allowed;
-};
-// Uma mudança central exige recarregar ambos os painéis. O projeto antigo nunca é usado como fallback.
-setInterval(async()=>{if(document.visibilityState!=='visible')return;try {const res=await platformNativeFetch(PLATFORM_BACKEND_URL+'/api/platform/runtime',{cache:'no-store',signal:AbortSignal.timeout(10000)});if(res.ok){const next=await res.json();if(next.version!==PLATFORM_RUNTIME.version)window.location.reload();}}catch(_){}},30000);
-
+        const firebaseConfig = {
+            apiKey: "AIzaSyB1E9IXvo-ET-9R2gIBIQ91ircMT6hDhrE",
+            authDomain: "milton-site.firebaseapp.com",
+            projectId: "milton-site",
+            storageBucket: "milton-site.firebasestorage.app",
+            messagingSenderId: "928099189018",
+            appId: "1:928099189018:web:91adb4117f17687e8eaca3"
+        };
 
         let app, auth, db, storage;
         try {
@@ -1189,49 +1143,6 @@ Star: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" h
 // =================================================================================
 // COMPONENTE AUXILIAR: CARD DE PONTUAÇÃO (AGORA ACEITA NOME DA MOEDA)
 // =================================================================================
-
-const ProgrammerSettings = () => {
-    const allowed=useProgrammerAccess();
-    const [data,setData]=useState(null),[form,setForm]=useState({r2:{}}),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
-    const [target,setTarget]=useState(''),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[prepared,setPrepared]=useState(false);
-    const [job,setJob]=useState(null),[jobId,setJobId]=useState(()=>{try{return localStorage.getItem('platform-migration-id')||'';}catch(_){return '';}});
-    const mounted=useRef(true),keepRunning=useRef(false);
-    useEffect(()=>()=>{mounted.current=false;keepRunning.current=false;},[]);
-    const load=async()=>{const current=await platformApi('/api/programmer/config');setData(current);if(current.activeMigrationId){setJobId(current.activeMigrationId);try{localStorage.setItem('platform-migration-id',current.activeMigrationId);}catch(_){}}setForm({...current.integrations,mercadoPagoAccessToken:'',r2:{...current.integrations.r2,accessKeyId:'',secretAccessKey:''}});};
-    useEffect(()=>{if(allowed)load().catch(e=>setMessage(e.message));},[allowed]);
-    const run=async fn=>{setBusy(true);setMessage('');try{await fn();}catch(e){if(mounted.current)setMessage(e.message);}finally{if(mounted.current)setBusy(false);}};
-    const set=(key,value)=>setForm(old=>({...old,[key]:value}));
-    const field=(label,key,secret=false)=> <label className="block text-sm">{label}<input autoComplete="off" type={secret?'password':'text'} value={form[key]||''} onChange={e=>set(key,e.target.value)} className="mt-1 w-full rounded-lg border p-3 bg-white text-slate-900" /></label>;
-    const save=()=>run(async()=>{await platformApi('/api/programmer/config',{integrations:form},'PUT');setMessage('Conexões salvas. Os painéis serão atualizados automaticamente em até 30 segundos.');setForm(old=>({...old,mercadoPagoAccessToken:'',r2:{...old.r2,accessKeyId:'',secretAccessKey:''}}));});
-    const remember=j=>{setJob(j);setJobId(j.id);try{localStorage.setItem('platform-migration-id',j.id);}catch(_){}};
-    const copy=async id=>{keepRunning.current=true;let current=await platformApi('/api/programmer/migrations/'+id);setJob(current);while(keepRunning.current&&!['ready','activated','cancelled'].includes(current.phase)){current=await platformApi('/api/programmer/migrations/'+id+'/step',{});if(mounted.current)setJob(current);}if(current.phase==='ready')setMessage('Cópia concluída. Verifique as configurações externas do destino antes de ativar.');};
-    const begin=()=>run(async()=>{let parsed;try{parsed=JSON.parse(target);}catch(_){throw new Error('Cole somente o objeto JSON Firebase, com nomes e valores entre aspas duplas.');}const created=await platformApi('/api/programmer/migrations',{firebase:parsed,adminEmail:email,adminPassword:password,writesFrozen:prepared});setPassword('');remember(created);await copy(created.id);});
-    const button='px-4 py-3 rounded-lg bg-indigo-600 text-white disabled:opacity-50';
-    if(!allowed)return <p className="p-6">Esta área exige uma conta autorizada como programador.</p>;
-    return <section className="max-w-5xl mx-auto space-y-6 p-4 md:p-6 bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-2xl">
-        <header><h2 className="text-2xl font-bold">Programador</h2><p className="text-sm mt-2">Configurações compartilhadas pelo administrador e pelo aluno. Chaves privadas são guardadas no servidor e não são exibidas novamente.</p></header>
-        {message&&<p role="status" className="p-4 rounded-lg bg-indigo-50 text-indigo-900 break-words">{message}</p>}
-        {!data?<button className={button} disabled={busy} onClick={()=>run(load)}>Carregar conexão</button>:<>
-        <div><h3 className="font-bold">Firebase conectado</h3><pre className="text-xs p-4 mt-2 overflow-auto rounded-lg bg-slate-950 text-slate-100">{JSON.stringify(data.firebase,null,2)}</pre></div>
-        <fieldset disabled={busy} className="space-y-4"><legend className="font-bold mb-3">Mercado Pago</legend><p className="text-sm">{data.integrations.mercadoPagoConfigured?'Token configurado. Deixe o campo vazio para manter.':'Token ainda não configurado.'}</p>{field('Chave pública','mercadoPagoPublicKey')}{field('Novo Access Token privado','mercadoPagoAccessToken',true)}</fieldset>
-        <fieldset disabled={busy} className="space-y-4"><legend className="font-bold mb-3">Cloudflare R2</legend><p className="text-sm">{data.integrations.r2?.configured?'Credenciais configuradas. Campos de chave vazios preservam os valores atuais.':'Configure a conta e o bucket.'} Alterar o bucket não transfere os arquivos existentes.</p><div className="grid md:grid-cols-2 gap-4">{[['Account ID','accountId'],['Bucket','bucket'],['Domínio público HTTPS','publicDomain'],['Novo Access Key ID','accessKeyId'],['Novo Secret Access Key','secretAccessKey']].map(([label,key])=><label key={key} className="block text-sm">{label}<input autoComplete="off" type={key.includes('Key')?'password':'text'} value={form.r2?.[key]||''} onChange={e=>set('r2',{...form.r2,[key]:e.target.value})} className="mt-1 w-full p-3 rounded-lg border bg-white text-slate-900" /></label>)}</div></fieldset>
-        <fieldset disabled={busy} className="space-y-4"><legend className="font-bold mb-3">YouTube e envio de e-mails</legend>{field('YouTube OAuth Client ID','youtubeClientId')}<p className="text-sm">A conta que autorizar o upload receberá o vídeo. Cadastre os domínios dos painéis nas origens autorizadas do Google Cloud.</p>{field('URL publicada do Apps Script','appsScriptUrl')}<label className="block text-sm">Código-fonte do Apps Script<textarea value={form.appsScriptCode||''} onChange={e=>set('appsScriptCode',e.target.value)} rows={10} className="mt-1 w-full p-3 rounded-lg border font-mono text-xs bg-white text-slate-900" placeholder="Cole aqui o script original. A URL publicada não permite recuperar automaticamente seu código-fonte." /></label><button className={button} disabled={!form.appsScriptCode} onClick={()=>run(async()=>{await navigator.clipboard.writeText(form.appsScriptCode);setMessage('Script copiado. Publique-o na nova conta e atualize a URL acima.');})}>Copiar script</button></fieldset>
-        <button className={button} disabled={busy} onClick={save}>Salvar conexões dos dois painéis</button>
-        <fieldset disabled={busy} className="space-y-4 border-t pt-6"><legend className="text-xl font-bold pt-6">Migrar para outro Firebase</legend><p className="text-sm">O destino precisa estar vazio e autorizado no servidor. A migração copia contas e documentos, inclusive subcoleções. Regras, índices, provedores de login, arquivos e serviços externos exigem preparação no destino. Consulte o guia entregue.</p>
-        <label className="block text-sm">Configuração Firebase do destino (JSON)<textarea rows={8} value={target} onChange={e=>setTarget(e.target.value)} className="w-full mt-1 p-3 rounded-lg border font-mono text-xs bg-white text-slate-900" placeholder={'{"apiKey":"...","authDomain":"...","projectId":"...","appId":"..."}'} /></label>
-        <label className="block text-sm">Novo e-mail administrador<input type="email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full p-3 mt-1 border rounded-lg bg-white text-slate-900" /></label>
-        <label className="block text-sm">Senha do novo administrador (mínimo 12 caracteres)<input type="password" autoComplete="new-password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full p-3 mt-1 border rounded-lg bg-white text-slate-900" /></label>
-        <label className="flex gap-3 items-start text-sm"><input type="checkbox" checked={prepared} onChange={e=>setPrepared(e.target.checked)} />Preparei regras e índices no destino, publiquei o bloqueio de manutenção na origem, interrompi cadastros e gravações externas e fiz backup.</label>
-        <button className={button} disabled={!prepared||!target||!email||password.length<12} onClick={begin}>Iniciar cópia em manutenção</button>
-        </fieldset></>}
-        <div className="space-y-3 border-t pt-4"><h3 className="font-bold">Acompanhar ou retomar migração</h3><input aria-label="Identificador da migração" value={jobId} onChange={e=>setJobId(e.target.value)} className="w-full p-3 border rounded-lg bg-white text-slate-900" placeholder="ID da migração" />
-        {job&&<p role="status">Etapa: {job.phase} · Contas: {job.users} · Documentos: {job.documents} · {job.source} → {job.target}</p>}
-        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||!jobId} onClick={()=>run(async()=>{setJob(await platformApi('/api/programmer/migrations/'+jobId));})}>Consultar</button><button className={button} disabled={busy||!jobId} onClick={()=>run(()=>copy(jobId))}>Continuar cópia</button>
-        {busy&&<button className={button} onClick={()=>{keepRunning.current=false;setMessage('A cópia será pausada após o lote atual. A manutenção permanece ativa até concluir ou cancelar.');}}>Pausar após este lote</button>}
-        {['ready','activated'].includes(job?.phase)&&<button className={button} disabled={busy} onClick={()=>run(async()=>{if(!await window.platformConfirm('Ativar o Firebase de destino nos dois painéis? Será necessário entrar novamente.'))return;await platformApi('/api/programmer/migrations/'+job.id+'/activate',{});window.location.reload();})}>Ativar novo Firebase nos dois painéis</button>}
-        {job&&!['activated','cancelled'].includes(job.phase)&&<button className="px-4 py-3 rounded-lg bg-red-700 text-white disabled:opacity-50" disabled={busy} onClick={()=>run(async()=>{if(!await window.platformConfirm('Cancelar a migração e reabrir o projeto de origem? Os dados parciais no destino serão preservados.'))return;await platformApi('/api/programmer/migrations/'+job.id+'/cancel',{});setJob({...job,phase:'cancelled'});setMessage('Migração cancelada. Origem liberada.');})}>Cancelar migração</button>}</div></div>
-    </section>;
-};
 
 // Controle compartilhado de anexos: somente conversas e publicações da comunidade.
 const CHAT_UPLOAD_MESSAGE = 'Envio de áudios e arquivos suspenso pelo administrador. Mensagens de texto continuam disponíveis.';
@@ -1580,13 +1491,13 @@ const AdminLiveSessions = ({ user, courses, showNotification }) => {
 };
 const YouTubeIntegrationSettings = ({ showNotification }) => {
     const [clientId, setClientId] = useState(''), [saving, setSaving] = useState(false), [ready, setReady] = useState(false);
-    useEffect(() => { return onSnapshot(doc(db, 'config', 'youtube_upload'), s => { setClientId(PLATFORM_RUNTIME.integrations.youtubeClientId || s.data()?.clientId || ''); setReady(true); }, () => { setReady(true); }); }, []);
+    useEffect(() => { return onSnapshot(doc(db, 'config', 'youtube_upload'), s => { setClientId(s.data()?.clientId || ''); setReady(true); }, () => { setReady(true); }); }, []);
     return <section className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3 text-slate-900 dark:text-white">
-        <h3 className="font-bold text-lg">Upload direto para o YouTube</h3><p className="text-sm text-slate-500">A conta Programador pode alterar o Client ID OAuth do projeto Google. A conexão com a conta é feita no botão de upload de cada aula. O arquivo vai diretamente ao YouTube como não listado, sujeito às permissões do Google.</p>
+        <h3 className="font-bold text-lg">Upload direto para o YouTube</h3><p className="text-sm text-slate-500">Cadastre o Client ID OAuth do seu projeto Google. A conexão com a conta é feita no botão de upload de cada aula. O arquivo vai diretamente ao YouTube como não listado, sujeito às permissões do Google.</p>
         <input aria-label="Client ID OAuth do Google" className="w-full p-3 rounded-lg bg-slate-100 dark:bg-slate-800" placeholder="...apps.googleusercontent.com" value={clientId} onChange={e => setClientId(e.target.value.trim())} />
         <button disabled={saving || !ready} className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50" onClick={async () => {
             if (clientId && !/^[A-Za-z0-9_.-]+\.apps\.googleusercontent\.com$/.test(clientId)) return showNotification('Client ID inválido.', 'warning');
-            setSaving(true); try { await platformApi('/api/programmer/config', {integrations:{youtubeClientId:clientId}}, 'PUT'); showNotification('Configuração YouTube salva. Os painéis serão atualizados em até 30 segundos.', 'success'); } catch (_) { showNotification('Não foi possível salvar a configuração.', 'error'); } finally { setSaving(false); }
+            setSaving(true); try { await setDoc(doc(db, 'config', 'youtube_upload'), { clientId, updatedAt: serverTimestamp() }, { merge: true }); showNotification('Configuração YouTube salva.', 'success'); } catch (_) { showNotification('Não foi possível salvar a configuração.', 'error'); } finally { setSaving(false); }
         }}>{saving ? 'Salvando...' : 'Salvar integração YouTube'}</button>
         <p className="text-xs text-slate-500">Ative YouTube Data API v3 e cadastre a origem HTTPS deste painel no Google Cloud. Não cole Client Secret. Projetos não auditados podem ter uploads limitados a privados.</p>
     </section>;
@@ -1597,7 +1508,7 @@ const YouTubeLessonUploader = ({ lesson, onUploaded }) => {
     const request = useRef(null), cancelled = useRef(false), alive = useRef(true), active = useRef(false);
     useEffect(() => {
         alive.current = true;
-        const off = onSnapshot(doc(db, 'config', 'youtube_upload'), snap => setClientId(PLATFORM_RUNTIME.integrations.youtubeClientId || snap.data()?.clientId || ''), () => setStatus('Configure a integração YouTube em Ajustes Gerais.'));
+        const off = onSnapshot(doc(db, 'config', 'youtube_upload'), snap => setClientId(snap.data()?.clientId || ''), () => setStatus('Configure a integração YouTube em Ajustes Gerais.'));
         loadPlatformScript('https://accounts.google.com/gsi/client', () => !!window.google?.accounts?.oauth2).then(() => { if (alive.current) setSdkReady(true); }).catch(e => { if (alive.current) setStatus(e.message); });
         return () => { alive.current = false; cancelled.current = true; request.current?.abort(); off(); };
     }, []);
@@ -8111,7 +8022,7 @@ const AdminEmailDispatchTab = ({ db, theme, Icons, showNotification, requestConf
             return showNotification("Selecione os destinatários e preencha a copy.", "warning");
         }
 
-        const scriptUrl = PLATFORM_RUNTIME.integrations.appsScriptUrl; 
+        const scriptUrl = "https://script.google.com/macros/s/AKfycbzyuxuOw0fx5YiAWuE_PaN8JE9VrupAStYQfKk6fFDMiLMn7BARtbLagoF3sPbhg9A/exec"; 
         
         setIsSending(true);
         try {
@@ -14547,7 +14458,6 @@ const AdminLevelsTab = ({ db, theme, Icons, showNotification, requestConfirmatio
 
 
 function App() {
-            const programmerAccess = useProgrammerAccess();
     usePlatformDomains();
     const chatUploadPolicy = useConversationUploads();
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -14682,8 +14592,191 @@ const [editingCertificate, setEditingCertificate] = useState(null);
 
             
 
-            const uploadToCustomDrive = securePlatformUpload;
-            const deleteFromCustomDrive = async fileUrl => { if (!fileUrl) return false; await platformApi('/api/integrations/r2/delete',{url:fileUrl}); return true; };
+            const getS3Client = () => {
+
+                // DADOS HARDCODED (Para garantir que funcione sem depender do formulário)
+
+                const accountId = '2ece542306d80259e71a793d20f91a60';
+
+                const accessKeyId = '5365b5ba42a26381492e9869e322d27a';
+
+                const secretAccessKey = '9c1257268d4892c92f9f43f7fd3a9eb5b0dcb6e29224c00a898c4cbffb1cc059';
+
+
+
+                // Se faltar algum dado, avisa no console
+
+                if (!accountId || !accessKeyId || !secretAccessKey) {
+
+                    console.warn("⚠️ R2: Faltam credenciais no código.");
+
+                    return null;
+
+                }
+
+
+
+                // Cria a conexão segura com o Cloudflare
+
+                return new AWS.S3({
+
+                    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+
+                    accessKeyId: accessKeyId,
+
+                    secretAccessKey: secretAccessKey,
+
+                    signatureVersion: 'v4',
+
+                    region: 'auto',
+
+                    s3ForcePathStyle: true
+
+                });
+
+            };
+
+
+
+            // --- UPLOAD INTELIGENTE BLINDADO (Corrige Erro de Tela Branca) ---
+            const uploadToCustomDrive = async (file, folderPath) => {
+                if (file && isConversationUpload(folderPath)) await assertConversationUploads();
+                if (!file) return null;
+                
+                // Verifica se a AWS foi carregada
+                if (typeof AWS === 'undefined') {
+                    showNotification("Erro: Biblioteca de conexão não carregou. Verifique sua internet.", "error");
+                    return null;
+                }
+
+                const s3 = getS3Client();
+                const bucketName = 'test03'; 
+                
+                // URL Pública (Se estiver vazia, usa o fallback)
+                let publicDomain = generalSettings.r2PublicDomain || "https://pub-2ece542306d80259e71a793d20f91a60.r2.dev"; 
+                if (publicDomain.endsWith('/')) publicDomain = publicDomain.slice(0, -1);
+
+                if (!s3 || !bucketName) {
+                    console.error("Faltam credenciais no código.");
+                    return null;
+                }
+
+                const cleanName = file.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '');
+                const uniqueFileName = `${Date.now()}_${cleanName}`;
+                
+                let safeFolder = folderPath || 'Geral/';
+                if (safeFolder.startsWith('/')) safeFolder = safeFolder.substring(1);
+                if (!safeFolder.endsWith('/')) safeFolder = safeFolder + '/';
+                
+                const key = `${safeFolder}${uniqueFileName}`;
+
+                const params = {
+                    Bucket: bucketName,
+                    Key: key,
+                    Body: file,
+                    ContentType: file.type
+                };
+
+                return new Promise((resolve, reject) => {
+                    const upload = s3.upload(params);
+                    const stopWatchingUpload = watchConversationUpload(upload, folderPath);
+                    upload.send((err, data) => {
+                        stopWatchingUpload();
+                        if (err) {
+                            console.error("❌ Erro R2:", err);
+                            reject(err);
+                        } else {
+                            const finalUrl = `${publicDomain}/${key}`;
+                            console.log("✅ Upload Sucesso:", finalUrl);
+                            resolve({
+                                url: finalUrl, 
+                                name: uniqueFileName,
+                                type: file.type.includes('video') ? 'video' : (file.type.includes('image') ? 'image' : 'pdf')
+                            });
+                        }
+                    });
+                });
+            };
+
+
+
+            // --- DELETAR (Limpeza) ---
+
+            const deleteFromCustomDrive = async (fileUrl) => {
+
+                if (!fileUrl) return;
+
+
+
+                const s3 = getS3Client();
+
+                const bucketName = 'test03'; // Hardcoded para garantir
+
+                const publicDomain = generalSettings.r2PublicDomain || "";
+
+
+
+                if (!s3 || !bucketName) return false;
+
+
+
+                try {
+
+                    // Extrai apenas o caminho do arquivo (Key), removendo o domínio
+
+                    let key = fileUrl;
+
+                    
+
+                    // Remove o domínio se ele estiver na URL
+
+                    if (publicDomain && fileUrl.includes(publicDomain)) {
+
+                        key = fileUrl.replace(publicDomain, '');
+
+                    } else if (fileUrl.includes('https://')) {
+
+                         // Tenta limpar qualquer domínio genérico caso o publicDomain tenha mudado
+
+                         const parts = fileUrl.split('/');
+
+                         // Remove o protocolo e dominio (primeiros 3 elementos) e junta o resto
+
+                         key = parts.slice(3).join('/');
+
+                    }
+
+
+
+                    // Limpa barras iniciais
+
+                    if (key.startsWith('/')) key = key.substring(1);
+
+
+
+                    console.log("🗑️ Apagando do R2:", key);
+
+
+
+                    const params = { Bucket: bucketName, Key: key };
+
+
+
+                    await s3.deleteObject(params).promise();
+
+                    return true;
+
+
+
+                } catch (error) {
+
+                    console.error("Erro ao apagar do R2:", error);
+
+                    return false;
+
+                }
+
+            };
 
            // --- NOVO: ESTADOS DO CHAT DE SUPORTE ---
             const [supportChats, setSupportChats] = useState([]);
@@ -14982,9 +15075,9 @@ const [editingCertificate, setEditingCertificate] = useState(null);
 
                 r2AccountId: '2ece542306d80259e71a793d20f91a60',
 
-                r2AccessKeyId: '',
+                r2AccessKeyId: '5365b5ba42a26381492e9869e322d27a',
 
-                r2SecretAccessKey: '',
+                r2SecretAccessKey: '9c1257268d4892c92f9f43f7fd3a9eb5b0dcb6e29224c00a898c4cbffb1cc059',
 
                 r2BucketName: 'test03',
 
@@ -15053,9 +15146,9 @@ const [editingCertificate, setEditingCertificate] = useState(null);
 
                 r2AccountId: '2ece542306d80259e71a793d20f91a60',
 
-                r2AccessKeyId: '',
+                r2AccessKeyId: '5365b5ba42a26381492e9869e322d27a',
 
-                r2SecretAccessKey: '',
+                r2SecretAccessKey: '9c1257268d4892c92f9f43f7fd3a9eb5b0dcb6e29224c00a898c4cbffb1cc059',
 
                 r2BucketName: 'test03',
 
@@ -15265,14 +15358,6 @@ const AVAILABLE_PERMISSIONS = [
                     const MASTER_ID = "XSVAXUUaUogC9F5hl5VKxPUfx343";
 
                     if (user) {
-                        const accessToken = await user.getIdTokenResult();
-                        if (accessToken.claims.programmer === true || accessToken.claims.admin === true) {
-                            const role = accessToken.claims.admin === true ? 'admin' : 'programmer';
-                            setIsAuthenticated(true); setUserRole(role);
-                            setCurrentUserData({uid:user.uid,email:user.email,nome:user.displayName||'Programador',role,permissions:role==='admin'?'all':['programador']});
-                            if(role==='programmer')setActiveTab('programador');
-                            setIsLoggingIn(false); return;
-                        }
                         // 1. REGRA SUPREMA: Verifica se o ID bate com o Mestre
                         if (user.uid === MASTER_ID) {
                             console.log("🔒 Mestre Admin autenticado via ID. Acesso Total.");
@@ -15349,17 +15434,13 @@ const AVAILABLE_PERMISSIONS = [
             useEffect(() => {
                 if (!isAuthenticated) return;
 
-                const affiliateView = ['affiliate','affiliates'].includes(currentUserData?.role);
-                if (affiliateView && !currentUserData?.id) return;
-                const salesSource = name => affiliateView ? query(collection(db, name), where('ref','==',currentUserData.id)) : collection(db, name);
-                setPagamentos([]); setVendasLoja([]);
                 const unsubAlunos = onSnapshot(collection(db, "users"), (snap) => setAlunos(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(u => u.role !== 'admin')));
                 const unsubCursos = onSnapshot(collection(db, "courses"), (snap) => setCursos(snap.docs.map(d => ({id: d.id, ...d.data()}))));
                 const unsubAffiliates = onSnapshot(collection(db, "affiliates"), (snap) => {
                     setAffiliates(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                 });
 
-                const unsubPagamentos = onSnapshot(salesSource("transactions"), (snap) => {
+                const unsubPagamentos = onSnapshot(collection(db, "transactions"), (snap) => {
                     const listaBruta = snap.docs.map(d => ({id: d.id, ...d.data()}));
 
                     // 👇 MOTOR ANTI-DUPLICIDADE APLICADO AOS CURSOS 👇
@@ -15406,17 +15487,17 @@ const AVAILABLE_PERMISSIONS = [
                 });
 
                 // NOVO OUVINTE: Traz as vendas do Marketplace instantaneamente
-                const unsubVendasLoja = onSnapshot(salesSource("marketplace_orders"), (snap) => {
+                const unsubVendasLoja = onSnapshot(collection(db, "marketplace_orders"), (snap) => {
                     setVendasLoja(snap.docs.map(d => ({id: d.id, ...d.data()})));
                 });
 
                 const unsubPopups = onSnapshot(collection(db, "communications"), (snap) => setPopups(snap.docs.map(d => ({id: d.id, ...d.data()}))));
-                const unsubTeam = affiliateView ? (() => {}) : onSnapshot(collection(db, "team"), (snap) => setTeam(snap.docs.map(d => ({id: d.id, ...d.data()}))));
-                const unsubLogs = affiliateView ? (() => {}) : onSnapshot(query(collection(db, "audit_logs"), orderBy("timestamp", "desc")), (snap) => setAuditLogs(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+                const unsubTeam = onSnapshot(collection(db, "team"), (snap) => setTeam(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+                const unsubLogs = onSnapshot(query(collection(db, "audit_logs"), orderBy("timestamp", "desc")), (snap) => setAuditLogs(snap.docs.map(d => ({id: d.id, ...d.data()}))));
                 const unsubGeneral = onSnapshot(doc(db, "config", "general_settings"), (doc) => { if (doc.exists()) setGeneralSettings(prev => ({...prev, ...doc.data()})); });
 
                 const qChat = query(collection(db, "support_chats"), orderBy("lastUpdated", "desc"));
-                const unsubChats = affiliateView ? (() => {}) : onSnapshot(qChat, (snap) => {
+                const unsubChats = onSnapshot(qChat, (snap) => {
                     const chats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                     setSupportChats(chats);
                 });
@@ -15425,14 +15506,14 @@ const AVAILABLE_PERMISSIONS = [
                     setCertificados(snap.docs.map(d => ({id: d.id, ...d.data()})));
                 });
 
-                const unsubCancellations = affiliateView ? (() => {}) : onSnapshot(query(collection(db, "cancellation_requests"), orderBy("createdAt", "desc")), (snap) => {
+                const unsubCancellations = onSnapshot(query(collection(db, "cancellation_requests"), orderBy("createdAt", "desc")), (snap) => {
                     setCancellationRequests(snap.docs.map(d => ({id: d.id, ...d.data()})));
                 });
 
                 return () => {
                     unsubAlunos(); unsubCursos(); unsubPagamentos(); unsubVendasLoja(); unsubPopups(); unsubTeam(); unsubLogs(); unsubGeneral(); unsubChats(); unsubCertificados(); unsubAffiliates(); unsubCancellations();
                 };
-            }, [isAuthenticated, currentUserData?.role, currentUserData?.id, currentUserData?.uid]);
+            }, [isAuthenticated]);
 
             // NOVO: Motor inteligente que constrói o GRÁFICO somando Cursos e Marketplace!
             useEffect(() => {
@@ -17231,7 +17312,6 @@ const handleSendPasswordReset = (email) => {
 
             // Disparado a cada vez que um input de cor (ou texto) é alterado
             const updateGenSetting = (field, value) => {
-                if (/^(mercadopagoAccessToken|mercadoPagoAccessToken|mercadoPagoPublicKey|r2AccountId|r2AccessKeyId|r2SecretAccessKey|r2BucketName|r2PublicDomain)$/.test(field)) { showNotification('Altere esta conexão na aba Programador.', 'info'); return; }
                 const newSettings = { ...draftSettings, [field]: value };
                 setDraftSettings(newSettings); 
                 updatePreview(newSettings); 
@@ -21034,7 +21114,6 @@ case 'categorias':
 
                     
 
-                case 'programador': return <ProgrammerSettings />;
                 case 'suporte':
                         if (!hasPermission('suporte')) return null;
 
@@ -23966,7 +24045,6 @@ case 'acelerador':
                                     badge={totalUnreadMessages} 
 
                                 />
-                                {programmerAccess && <NavItem id="programador" icon={Icons.Shield} label="Programador" badge={0} />}
 
                             {/* 👇 ADICIONE ESTA LINHA 👇 */}
                                 <NavItem id="ajuda" icon={Icons.HelpCircle} label="Ajuda / Guia" badge={0} />
