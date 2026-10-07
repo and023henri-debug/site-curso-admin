@@ -3,6 +3,7 @@
 <html lang="pt-BR"> 
 
 <head>
+  <meta name="referrer" content="strict-origin-when-cross-origin">
 <!-- =====================================================================
  BLOCO DE BLOQUEIO VISUAL — INÍCIO — EDITÁVEL / REMOVÍVEL
  Localização: início do <head>. Para desativar: enabled: false.
@@ -1258,9 +1259,13 @@ const guardedPasswordSignIn = (instance, email, password) => window.platformAuth
 
 const platformVideoId = value => {
     try {
-        const u = new URL(String(value || ''));
-        if (!['youtube.com','www.youtube.com','m.youtube.com','youtube-nocookie.com','www.youtube-nocookie.com','youtu.be'].includes(u.hostname)) return null;
-        const id = u.hostname === 'youtu.be' ? u.pathname.split('/')[1] : u.searchParams.get('v') || u.pathname.match(/^\/(?:embed|shorts|live)\/([^/]+)/)?.[1];
+        let text = String(value || '').trim().replace(/&amp;/g, '&');
+        if (/^[A-Za-z0-9_-]{11}$/.test(text)) return text;
+        if (/^(?:www\.|m\.)?(?:youtube\.com|youtube-nocookie\.com|youtu\.be)\//i.test(text)) text = 'https://' + text;
+        const u = new URL(text);
+        if (!['http:', 'https:'].includes(u.protocol)) return null;
+        if (!['youtube.com','www.youtube.com','m.youtube.com','youtube-nocookie.com','www.youtube-nocookie.com','youtu.be','www.youtu.be'].includes(u.hostname)) return null;
+        const id = /^(?:www\.)?youtu\.be$/.test(u.hostname) ? u.pathname.split('/')[1] : u.searchParams.get('v') || u.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/]+)/)?.[1];
         return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
     } catch (_) { return null; }
 };
@@ -1553,10 +1558,14 @@ const YouTubeLessonUploader = ({ lesson, onUploaded }) => {
                         });
                         ui(setStatus, 'Enviando diretamente ao YouTube...');
                     }
-                    if (!result?.id) throw new Error('O YouTube não retornou o ID do vídeo. Verifique seu canal antes de tentar novamente.');
+                    if (!platformVideoId(result?.id)) throw new Error('O YouTube não retornou um ID de vídeo válido. Verifique seu canal antes de tentar novamente.');
                     const url = `https://www.youtube.com/watch?v=${result.id}`; ui(setResultUrl, url); ui(setProgress, 100);
-                    if (result.status?.privacyStatus !== 'unlisted') { ui(setStatus, 'O vídeo foi recebido, mas o YouTube não confirmou “não listado”. Verifique a restrição do projeto no Google e a privacidade no YouTube Studio. A aula não foi substituída.'); }
-                    else { if (alive.current) onUploaded(url); ui(setStatus, 'Vídeo enviado como não listado e vinculado à aula. Salve o curso. O YouTube ainda pode estar processando o vídeo.'); }
+                    // Preserve the returned URL even when Google restricts a new upload to private.
+                    if (alive.current) onUploaded(url);
+                    const playable = ['unlisted', 'public'].includes(result.status?.privacyStatus) && result.status?.embeddable !== false;
+                    ui(setStatus, playable
+                        ? 'Link vinculado à aula. Clique em Salvar Alterações no curso. Aguarde o YouTube terminar o processamento antes de testar na página do aluno.'
+                        : 'Link vinculado à aula, mas o YouTube ainda não liberou a reprodução para os alunos. Salve as alterações do curso. No YouTube Studio, confira processamento, visibilidade Não listado ou Público e Permitir incorporação. Projetos de API não auditados podem ter uploads limitados a privados.');
                 } catch (e) { ui(setStatus, e.message || 'Falha ao enviar vídeo.'); }
                 finally { token = null; request.current = null; active.current = false; ui(setBusy, false); }
             }
@@ -18087,7 +18096,11 @@ const handleSendPasswordReset = (email) => {
             
             const addLesson = (moduleId) => { const newLesson = { id: Date.now(), titulo: 'Nova Aula', tipo: 'video', conteudo: '' }; const updatedModules = editingCourse.modulos.map(m => m.id === moduleId ? { ...m, aulas: [...m.aulas, newLesson] } : m); setEditingCourse({ ...editingCourse, modulos: updatedModules }); };
 
-            const updateLesson = (modId, lessonId, field, value) => { const updatedModules = editingCourse.modulos.map(m => m.id === modId ? { ...m, aulas: m.aulas.map(a => a.id === lessonId ? { ...a, [field]: value } : a) } : m); setEditingCourse({ ...editingCourse, modulos: updatedModules }); };
+            const updateLesson = (modId, lessonId, field, value) => {
+                setEditingCourse(current => current ? { ...current, modulos: current.modulos.map(m => m.id === modId ? {
+                    ...m, aulas: m.aulas.map(a => a.id === lessonId ? { ...a, [field]: value } : a)
+                } : m) } : current);
+            };
 
             // --- INÍCIO: LÓGICA DE MATERIAIS COMPLEMENTARES ---
             const addMaterial = (modId, lessonId) => {
@@ -20167,6 +20180,7 @@ case 'categorias':
 
 {aula.tipo === 'video' && <div className="space-y-3">
     <label className="block text-xs text-slate-500">Link do vídeo (YouTube, Vimeo ou URL direta)<input type="url" value={aula.conteudo || ''} onChange={e => updateLesson(modulo.id, aula.id, 'conteudo', e.target.value)} className="w-full mt-1 p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700" placeholder="https://www.youtube.com/watch?v=..." /></label>
+    {platformVideoId(aula.conteudo) && <p className="text-xs text-amber-600">Vídeo do YouTube: salve as alterações do curso para atualizar a aula dos alunos. O vídeo precisa estar processado, Não listado ou Público e com incorporação permitida. <a href={`https://studio.youtube.com/video/${platformVideoId(aula.conteudo)}/edit`} target="_blank" rel="noopener noreferrer" className="underline">Conferir no YouTube Studio</a></p>}
     <YouTubeLessonUploader key={aula.id} lesson={aula} onUploaded={url => updateLesson(modulo.id, aula.id, 'conteudo', url)} />
 </div>}
 <div className="w-full">{!aula.conteudo ? (
