@@ -3,6 +3,86 @@
 <html lang="pt-BR"> 
 
 <head>
+<!-- =====================================================================
+ BLOCO DE BLOQUEIO VISUAL — INÍCIO — EDITÁVEL / REMOVÍVEL
+ Localização: início do <head>. Para desativar: enabled: false.
+ ATENÇÃO: isto NÃO oculta HTML/chaves, NÃO bloqueia requisições externas
+ e limpar o console NÃO impede injeção de scripts. Proteções reais no servidor.
+ A impressão ficará oculta, inclusive documentos/certificados desta página.
+====================================================================== -->
+<script>
+window.PLATFORM_VISUAL_LOCK = { enabled: true, clearConsole: true };
+window.addEventListener('DOMContentLoaded', () => {
+    if (!window.PLATFORM_VISUAL_LOCK.enabled) return;
+    document.addEventListener('contextmenu', e => {
+        if (window.PLATFORM_VISUAL_LOCK.enabled) e.preventDefault();
+    });
+    document.addEventListener('keydown', e => {
+        if (!window.PLATFORM_VISUAL_LOCK.enabled) return;
+        const key = String(e.key || '').toLowerCase();
+        if (key === 'f12' || e.keyCode === 123 ||
+            (e.ctrlKey && e.shiftKey && ['i','j','c'].includes(key)) ||
+            (e.ctrlKey && ['u','s'].includes(key)) ||
+            (e.metaKey && e.altKey && ['i','j','u'].includes(key))) e.preventDefault();
+    });
+    let previousDisplay = '';
+    window.addEventListener('beforeprint', () => {
+        if (!window.PLATFORM_VISUAL_LOCK.enabled) return;
+        previousDisplay = document.body.style.display;
+        document.body.style.display = 'none';
+    });
+    window.addEventListener('afterprint', () => { document.body.style.display = previousDisplay; });
+    setInterval(() => {
+        if (!window.PLATFORM_VISUAL_LOCK.enabled || !window.PLATFORM_VISUAL_LOCK.clearConsole) return;
+        console.clear();
+        console.log('%c⛔ ACESSO RESTRITO', 'color:red;font-size:24px;font-weight:bold;text-shadow:1px 1px 0px black;');
+    }, 1000);
+});
+</script>
+<!-- BLOCO DE BLOQUEIO VISUAL — FIM -->
+
+<!-- LIMITADOR LOCAL DE ACESSO — INÍCIO
+ 5 tentativas por 15 minutos por navegador/origem e operação.
+ Não armazena senha/email. Não substitui limites do Firebase/servidor.
+ Pode ser contornado limpando armazenamento, mudando navegador ou acessando API.
+-->
+<script>
+(() => {
+    const LIMIT = 5, WINDOW = 15 * 60 * 1000;
+    const memory = {}, pending = new Set();
+    const read = key => { try { return JSON.parse(localStorage.getItem(key)) || memory[key]; } catch (_) { return memory[key]; } };
+    const write = (key, value) => { memory[key] = value; try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {} };
+    const blocked = until => {
+        const error = new Error(`Limite de tentativas atingido neste navegador. Aguarde ${Math.max(1, Math.ceil((until - Date.now()) / 60000))} minuto(s) e tente novamente.`);
+        error.code = 'platform/too-many-attempts'; return error;
+    };
+    window.platformAuthAttempt = async (kind, action) => {
+        const key = 'platform-auth-attempts-v1:' + kind;
+        if (pending.has(key)) { const error = new Error('Uma tentativa já está em andamento. Aguarde.'); error.code = 'platform/auth-pending'; throw error; }
+        pending.add(key);
+        const run = async () => {
+            const now = Date.now(); let state = read(key);
+            if (!state || !Number.isFinite(state.until) || state.until <= now) state = { count: 0, until: now + WINDOW };
+            if (state.count >= LIMIT) throw blocked(state.until);
+            state = { ...state, count: state.count + 1 }; write(key, state);
+            try {
+                const result = await action();
+                if (kind === 'password') write(key, {count:0, until:0});
+                return result;
+            } catch (error) {
+                if (error.code === 'auth/too-many-requests') write(key, {count:LIMIT, until:Date.now() + WINDOW});
+                if (error.code === 'auth/network-request-failed' || error.code === 'auth/popup-closed-by-user') write(key, {...state, count:Math.max(0, state.count - 1)});
+                if (read(key)?.count >= LIMIT) throw blocked(read(key).until);
+                throw error;
+            }
+        };
+        try { return navigator.locks?.request ? await navigator.locks.request(key, { mode:'exclusive' }, run) : await run(); }
+        finally { pending.delete(key); }
+    };
+})();
+</script>
+<!-- LIMITADOR LOCAL DE ACESSO — FIM -->
+
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Meu Curso | ADM</title>
@@ -655,7 +735,63 @@ if(_isIos && !_isStandalone){
 
 
 
-    <script type="text/babel" data-type="module">
+    <script>
+// Mensagens da plataforma: fila de diálogos internos, sem alert/confirm/prompt nativos.
+(() => {
+    const queue = []; let visible = false;
+    const showNext = () => {
+        if (visible || !queue.length) return;
+        visible = true;
+        const { kind, message, initial, resolve } = queue.shift();
+        const previous = document.activeElement;
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:20px;font-family:system-ui,sans-serif;color:#f8fafc;';
+        const panel = document.createElement('form');
+        panel.setAttribute('role', 'alertdialog'); panel.setAttribute('aria-modal', 'true');
+        panel.setAttribute('aria-labelledby', 'platform-dialog-title'); panel.setAttribute('aria-describedby', 'platform-dialog-message');
+        panel.style.cssText = 'width:100%;max-width:480px;max-height:90vh;overflow:auto;background:#111827;border:1px solid #374151;border-radius:20px;padding:26px;box-shadow:0 24px 80px #0008;';
+        const title = document.createElement('h2'); title.id = 'platform-dialog-title'; title.textContent = kind === 'alert' ? 'Aviso da plataforma' : kind === 'prompt' ? 'Informe o valor' : 'Confirmar ação'; title.style.cssText = 'font-size:21px;font-weight:700;margin:0 0 16px;';
+        const content = document.createElement('p'); content.id = 'platform-dialog-message'; content.textContent = String(message); content.style.cssText = 'font-size:15px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 22px;color:#cbd5e1;';
+        panel.append(title, content);
+        let input;
+        if (kind === 'prompt') {
+            input = document.createElement('input'); input.type = 'text'; input.value = initial || ''; input.setAttribute('aria-labelledby', content.id);
+            input.style.cssText = 'box-sizing:border-box;width:100%;padding:12px;margin-bottom:20px;background:#030712;color:white;border:1px solid #64748b;border-radius:10px;font-size:16px;'; panel.append(input);
+        }
+        const actions = document.createElement('div'); actions.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;';
+        const cancel = document.createElement('button'), accept = document.createElement('button');
+        const buttonStyle = 'cursor:pointer;padding:11px 20px;border-radius:10px;border:1px solid #64748b;color:white;font-size:14px;font-weight:600;';
+        cancel.type = 'button'; cancel.textContent = 'Cancelar'; cancel.style.cssText = buttonStyle + 'background:#334155;';
+        accept.type = 'submit'; accept.textContent = kind === 'alert' ? 'Entendi' : 'Confirmar'; accept.style.cssText = buttonStyle + 'background:#4f46e5;';
+        if (kind !== 'alert') actions.append(cancel); actions.append(accept); panel.append(actions); overlay.append(panel);
+        let closed = false;
+        const close = result => {
+            if (closed) return; closed = true;
+            document.removeEventListener('keydown', keyHandler, true); overlay.remove(); visible = false;
+            if (previous?.isConnected) previous.focus();
+            resolve(result); showNext();
+        };
+        const keyHandler = event => {
+            if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(kind === 'confirm' ? false : null); }
+            if (event.key === 'Tab') {
+                const focusable = [...panel.querySelectorAll('input,button')]; const first = focusable[0], last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+                else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+            }
+        };
+        cancel.onclick = () => close(kind === 'confirm' ? false : null);
+        panel.onsubmit = event => { event.preventDefault(); close(kind === 'prompt' ? input.value : true); };
+        (document.fullscreenElement || document.body).append(overlay);
+        document.addEventListener('keydown', keyHandler, true); (input || (kind === 'confirm' ? cancel : accept)).focus();
+    };
+    const request = (kind, message, initial) => new Promise(resolve => { queue.push({ kind, message, initial, resolve }); showNext(); });
+    window.platformAlert = message => { request('alert', message); };
+    window.platformConfirm = message => request('confirm', message);
+    window.platformPrompt = (message, initial = '') => request('prompt', message, initial);
+})();
+</script>
+
+<script type="text/babel" data-type="module">
 
         // Importações Modernas
         import React, { useState, useEffect, useMemo, useRef } from 'react';
@@ -674,7 +810,7 @@ if(_isIos && !_isStandalone){
             createUserWithEmailAndPassword, sendPasswordResetEmail
         } from 'firebase/auth';
         import { 
-            getFirestore, collection, getDocs, doc, updateDoc, setDoc, addDoc, 
+            getDocFromServer, getFirestore, collection, getDocs, doc, updateDoc, setDoc, addDoc, 
             deleteDoc, onSnapshot, query, where, orderBy, serverTimestamp, getDoc, arrayUnion 
         } from 'firebase/firestore';
         import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage'; 
@@ -1007,6 +1143,439 @@ Star: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" h
 // =================================================================================
 // COMPONENTE AUXILIAR: CARD DE PONTUAÇÃO (AGORA ACEITA NOME DA MOEDA)
 // =================================================================================
+
+// Controle compartilhado de anexos: somente conversas e publicações da comunidade.
+const CHAT_UPLOAD_MESSAGE = 'Envio de áudios e arquivos suspenso pelo administrador. Mensagens de texto continuam disponíveis.';
+const isConversationUpload = (folder = '') => /^(Chat\/|ChatSuporte\/|AffiliateChats\/|Community\/$)/i.test(folder.replace(/^\/+/, ''));
+const assertConversationUploads = async () => {
+    let snap;
+    try { snap = await getDocFromServer(doc(db, 'config', 'chat_upload_policy')); }
+    catch (error) { throw new Error('Não foi possível verificar a permissão de envio. Verifique a conexão e tente novamente.'); }
+    if (!snap.exists() || snap.data().enabled !== true) throw new Error(CHAT_UPLOAD_MESSAGE);
+};
+
+const watchConversationUpload = (upload, folder) => {
+    if (!isConversationUpload(folder)) return () => {};
+    return onSnapshot(doc(db, 'config', 'chat_upload_policy'), snap => {
+        if (!snap.exists() || snap.data().enabled !== true) upload.abort();
+    }, () => upload.abort());
+};
+const useConversationUploads = () => {
+    const [policy, setPolicy] = useState({ enabled: false, ready: false, error: false });
+    useEffect(() => {
+        if (!db) return;
+        // Nunca mostrar os controles com uma permissão ausente, pendente ou apenas em cache.
+        return onSnapshot(doc(db, 'config', 'chat_upload_policy'), { includeMetadataChanges: true }, snap => {
+            const confirmed = !snap.metadata.fromCache && !snap.metadata.hasPendingWrites;
+            setPolicy({
+                enabled: confirmed && snap.exists() && snap.data().enabled === true,
+                ready: confirmed,
+                error: false
+            });
+        }, () => setPolicy({ enabled: false, ready: true, error: true }));
+    }, []);
+    return policy;
+};
+const ConversationUploadNotice = ({ policy }) => policy.enabled ? null : (
+    <p role="status" className="text-xs px-3 py-2 text-amber-700 bg-amber-50 dark:text-amber-200 dark:bg-amber-900/20 rounded-lg">
+        {!policy.ready ? 'Verificando permissão de anexos...' : policy.error ? 'Anexos indisponíveis: não foi possível consultar a configuração.' : CHAT_UPLOAD_MESSAGE}
+    </p>
+);
+// Fim do controle compartilhado de anexos.
+
+const ChatUploadSettings = ({ theme, showNotification }) => {
+    const policy = useConversationUploads();
+    const [saving, setSaving] = useState(false);
+    const toggle = async () => {
+        if (saving || !policy.ready || policy.error) return;
+        const enabled = !policy.enabled;
+        if (enabled && !await window.platformConfirm('Reativar o envio de áudios e arquivos? Ao confirmar, você assume a responsabilidade pelo consumo de armazenamento e eventuais custos do Cloudflare R2 gerados pelos envios de alunos e administradores.')) return;
+        setSaving(true);
+        try {
+            await setDoc(doc(db, 'config', 'chat_upload_policy'), {
+                enabled, updatedAt: serverTimestamp(), updatedBy: auth.currentUser?.uid || null,
+                ...(enabled ? { costResponsibilityAcceptedAt: serverTimestamp(), costResponsibilityAcceptedBy: auth.currentUser?.uid || null } : {})
+            }, { merge: true });
+            showNotification(enabled ? 'Envio de áudios e arquivos reativado.' : 'Envio de áudios e arquivos suspenso.', 'success');
+        } catch (error) { showNotification('Não foi possível salvar o controle de anexos. Verifique a conexão e as permissões do Firebase.', 'error'); }
+        finally { setSaving(false); }
+    };
+    return <section className={`${theme.card} p-8`}>
+        <h3 className={`text-lg font-bold mb-3 ${theme.text}`}>Áudios e arquivos nas conversas</h3>
+        <p className="text-sm text-slate-500 mb-3">Controle os envios no suporte, nas conversas entre alunos, nas comunidades e no chat de afiliados, incluindo o envio pelo administrador. Mensagens de texto e arquivos já enviados continuam disponíveis.</p>
+        <p className="text-sm text-amber-600 dark:text-amber-300 mb-4">Ao ativar, o administrador assume a responsabilidade pelo consumo de armazenamento e eventuais custos do Cloudflare R2. A suspensão não apaga arquivos existentes.</p>
+        <p className={`text-sm font-bold mb-3 ${theme.text}`}>{!policy.ready ? 'Carregando configuração...' : policy.error ? 'Não foi possível carregar a configuração.' : policy.enabled ? 'Status: envios permitidos' : 'Status: envios suspensos'}</p>
+        <button type="button" onClick={toggle} disabled={saving || !policy.ready || policy.error} className={`px-5 py-3 rounded-xl font-bold text-white disabled:opacity-50 ${policy.enabled ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+            {saving ? 'Salvando...' : policy.enabled ? 'Suspender áudios e arquivos' : 'Ativar áudios e arquivos'}
+        </button>
+        <p className="text-xs text-slate-500 mt-3">A alteração é salva imediatamente, sem precisar clicar em Salvar ajustes.</p>
+    </section>;
+};
+// NOVOS RECURSOS: reuniões, lives e identificação de vídeo.
+const PLATFORM_DEFAULT_STUDENT = 'https://site-curso-cliente.vercel.app';
+const normalizePlatformDomain = value => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    const url = new URL(text.includes('://') ? text : `https://${text}`);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || (url.pathname !== '/' && url.pathname !== '')) throw new Error('Informe apenas o domínio HTTPS, sem caminho, senha ou parâmetros.');
+    return url.origin;
+};
+let platformDomains = { student: '', admin: '' };
+const getPlatformStudentUrl = () => platformDomains.student || PLATFORM_DEFAULT_STUDENT;
+const usePlatformDomains = () => {
+    const [value, setValue] = useState(platformDomains);
+    useEffect(() => onSnapshot(doc(db, 'config', 'platform_domains'), snap => {
+        const data = snap.data() || {};
+        try { platformDomains = {student:normalizePlatformDomain(data.student), admin:normalizePlatformDomain(data.admin)}; setValue(platformDomains); } catch (_) {}
+    }, () => {}), []);
+    return value;
+};
+const PlatformDomainSettings = ({ showNotification }) => {
+    const config = usePlatformDomains();
+    const [student, setStudent] = useState(''), [admin, setAdmin] = useState(''), [saving, setSaving] = useState(false), [dirty, setDirty] = useState(false);
+    useEffect(() => { if (!dirty) { setStudent(config.student || getPlatformStudentUrl()); setAdmin(config.admin || location.origin); } }, [config, dirty]);
+    const save = async () => {
+        setSaving(true);
+        try {
+            const next = {student:normalizePlatformDomain(student), admin:normalizePlatformDomain(admin)};
+            if (!next.student || !next.admin) throw new Error('Preencha os dois domínios.');
+            await setDoc(doc(db, 'config', 'platform_domains'), {...next, updatedAt:serverTimestamp()}, {merge:true});
+            setDirty(false); showNotification('Domínios salvos. Os novos links utilizarão o domínio configurado.', 'success');
+        } catch (e) { showNotification(e.message || 'Não foi possível salvar os domínios.', 'error'); }
+        finally { setSaving(false); }
+    };
+    return <section className="p-6 rounded-2xl border border-slate-500/30 space-y-4">
+        <h3 className="text-xl font-bold">Domínios da plataforma</h3>
+        <p className="text-sm">Configure os endereços completos. Links de cursos, produtos, afiliados e prévias usarão o domínio do aluno.</p>
+        <label className="block">Domínio do aluno<input aria-label="Domínio do aluno" className="block w-full p-3 rounded-lg border text-slate-900" value={student} onChange={e => {setDirty(true);setStudent(e.target.value);}} placeholder="https://alunos.seudominio.com" /></label>
+        <label className="block">Domínio do administrador<input aria-label="Domínio do administrador" className="block w-full p-3 rounded-lg border text-slate-900" value={admin} onChange={e => {setDirty(true);setAdmin(e.target.value);}} placeholder="https://admin.seudominio.com" /></label>
+        <p className="text-sm">Antes de salvar, publique os painéis nos novos endereços, configure DNS/HTTPS e autorize os domínios no Firebase e nas integrações. Esta configuração não cria subdomínios nem migra hospedagem. Redirecionamentos do domínio antigo devem preservar os parâmetros id, product e ref.</p>
+        <button disabled={saving} onClick={save} className="px-5 py-3 bg-indigo-600 text-white rounded-xl">{saving ? 'Salvando…' : 'Salvar domínios'}</button>
+    </section>;
+};
+
+const guardedPasswordSignIn = (instance, email, password) => window.platformAuthAttempt('password', () => signInWithEmailAndPassword(instance, String(email || '').trim(), password));
+
+const platformVideoId = value => {
+    try {
+        const u = new URL(String(value || ''));
+        if (!['youtube.com','www.youtube.com','m.youtube.com','youtube-nocookie.com','www.youtube-nocookie.com','youtu.be'].includes(u.hostname)) return null;
+        const id = u.hostname === 'youtu.be' ? u.pathname.split('/')[1] : u.searchParams.get('v') || u.pathname.match(/^\/(?:embed|shorts|live)\/([^/]+)/)?.[1];
+        return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
+    } catch (_) { return null; }
+};
+const platformHttpsUrl = value => { try { const u = new URL(value); return u.protocol === 'https:' ? u.href : ''; } catch (_) { return ''; } };
+const platformScriptLoads = {};
+const loadPlatformScript = (src, ready) => {
+    if (ready()) return Promise.resolve();
+    if (!platformScriptLoads[src]) platformScriptLoads[src] = new Promise((resolve, reject) => {
+        const script = document.createElement('script'); script.src = src; script.async = true;
+        script.onload = () => { if (ready()) resolve(); else { delete platformScriptLoads[src]; reject(new Error('Não foi possível iniciar a integração.')); } };
+        script.onerror = () => { delete platformScriptLoads[src]; script.remove(); reject(new Error('Não foi possível carregar a integração. Verifique a conexão.')); };
+        document.head.appendChild(script);
+    });
+    return platformScriptLoads[src];
+};
+const useLiveConfiguration = () => {
+    const [state, setState] = useState({ loaded: false, enabled: false, error: '' });
+    useEffect(() => {
+        if (!db) return;
+        return onSnapshot(doc(db, 'config', 'live_sessions'), snapshot => {
+            setState({ ...(snapshot.exists() ? snapshot.data() : {}), loaded: true, enabled: snapshot.exists() && snapshot.data().enabled === true, error: '' });
+        }, () => setState({ loaded: true, enabled: false, error: 'Não foi possível carregar as transmissões. Verifique as permissões do Firebase.' }));
+    }, []);
+    return state;
+};
+const MeetingRoom = ({ config, user }) => {
+    const container = useRef(null), api = useRef(null);
+    const [joining, setJoining] = useState(false), [error, setError] = useState('');
+    useEffect(() => {
+        if (!joining) return;
+        let cancelled = false;
+        const domain = String(config.jitsiDomain || 'meet.jit.si').trim();
+        if (!/^[a-z0-9.-]+$/i.test(domain)) { setError('Endereço do servidor de reuniões inválido.'); return; }
+        loadPlatformScript(`https://${domain}/external_api.js`, () => !!window.JitsiMeetExternalAPI).then(() => {
+            if (cancelled || !container.current) return;
+            api.current = new window.JitsiMeetExternalAPI(domain, {
+                roomName: config.roomName, parentNode: container.current, width: '100%', height: '100%', lang: 'ptBR',
+                userInfo: { displayName: user?.displayName || user?.nome || user?.name || 'Participante' },
+                configOverwrite: { startWithAudioMuted: true, startWithVideoMuted: true, prejoinConfig: { enabled: true },
+                    toolbarButtons: ['microphone','camera','desktop','chat','raisehand','tileview','participants-pane','settings','fullscreen','hangup'] }
+            });
+            api.current.addListener('readyToClose', () => setJoining(false));
+        }).catch(e => { if (!cancelled) { setError(e.message); setJoining(false); } });
+        return () => { cancelled = true; api.current?.dispose(); api.current = null; };
+    }, [joining, config.roomName, config.jitsiDomain]);
+    return <div className="space-y-3">
+        {error && <p role="alert" className="text-red-500">{error}</p>}
+        {!joining ? <button className="px-5 py-3 rounded-xl bg-indigo-600 text-white font-bold" onClick={() => { setError(''); setJoining(true); }}>Entrar na reunião</button> : <button className="px-4 py-2 rounded-lg bg-slate-700 text-white" onClick={() => setJoining(false)}>Sair da reunião</button>}
+        <div ref={container} className={joining ? 'w-full h-[75vh] min-h-[420px] rounded-xl overflow-hidden bg-black' : 'hidden'} />
+    </div>;
+};
+const BroadcastPlayer = ({ config }) => {
+    const id = platformVideoId(config.videoUrl), url = platformHttpsUrl(config.videoUrl);
+    if (!url) return <p className="p-6 text-slate-500">Aguardando o vídeo da transmissão.</p>;
+    return id ? <iframe className="w-full aspect-video rounded-xl bg-black" title="Transmissão ao vivo" src={`https://www.youtube.com/embed/${id}?rel=0&autoplay=1&mute=1`} allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen /> : <video key={url} src={url} controls autoPlay muted playsInline loop={config.loop === true} className="w-full aspect-video rounded-xl bg-black" />;
+};
+// Live nativa: sinalização Firestore e vídeo ponto a ponto. Nenhum arquivo vai para o R2.
+const NativeBroadcast = ({ config, user, isHost = false }) => {
+    const videoRef = useRef(null), streamRef = useRef(null), cleanupRef = useRef(() => {}), ownSession = useRef(null), mounted = useRef(true);
+    const captureStreamsRef = useRef([]), audioContextRef = useRef(null);
+    const [running, setRunning] = useState(false), [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [muted, setMuted] = useState(false);
+    const report = text => { if (mounted.current) setMessage(text); };
+    const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    if (config.turnUrl && /^(turn|turns):/.test(config.turnUrl)) iceServers.push({ urls: config.turnUrl, username: config.turnUsername || '', credential: config.turnCredential || '' });
+    const stop = async () => {
+        const session = ownSession.current; ownSession.current = null;
+        cleanupRef.current(); cleanupRef.current = () => {};
+        streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null;
+        captureStreamsRef.current.forEach(source => source.getTracks().forEach(t => t.stop())); captureStreamsRef.current = [];
+        audioContextRef.current?.close().catch(() => {}); audioContextRef.current = null;
+        if (videoRef.current) videoRef.current.srcObject = null;
+        if (mounted.current) { setRunning(false); setBusy(false); }
+        if (session) {
+            try { const ref = doc(db, 'config', 'live_sessions'); const current = await getDoc(ref);
+                if (current.data()?.broadcastId === session) await updateDoc(ref, { nativeActive: false });
+            } catch (_) { report('A captura foi encerrada. Não foi possível atualizar o status da live.'); }
+        }
+    };
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false; stop(); }; }, []);
+    useEffect(() => { if (isHost && (!config.enabled || config.mode !== 'native')) stop(); }, [config.enabled, config.mode]);
+    const start = async source => {
+        if (busy || running) return;
+        setBusy(true); setMessage('');
+        let stream;
+        try {
+            if (!window.isSecureContext || !navigator.mediaDevices || !window.RTCPeerConnection) throw new Error('Use HTTPS e um navegador compatível com câmera e transmissão.');
+            if (source === 'screen') {
+                stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                streamRef.current = stream;
+                // Mantém a voz do apresentador também ao compartilhar uma aba com som.
+                const display = stream;
+                const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+                captureStreamsRef.current = [display, mic];
+                if (display.getAudioTracks().length) {
+                    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                    const audioContext = new AudioContextClass(); audioContextRef.current = audioContext;
+                    await audioContext.resume();
+                    const destination = audioContext.createMediaStreamDestination();
+                    audioContext.createMediaStreamSource(display).connect(destination);
+                    audioContext.createMediaStreamSource(mic).connect(destination);
+                    stream = new MediaStream([...display.getVideoTracks(), ...destination.stream.getAudioTracks()]);
+                } else stream = new MediaStream([...display.getVideoTracks(), ...mic.getAudioTracks()]);
+            } else stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            streamRef.current = stream;
+            if (!mounted.current) { stream.getTracks().forEach(t => t.stop()); return; }
+            const broadcastId = crypto.randomUUID(); ownSession.current = broadcastId;
+            await updateDoc(doc(db, 'config', 'live_sessions'), { nativeActive: true, broadcastId, hostUid: auth.currentUser.uid, startedAt: serverTimestamp() });
+            if (!mounted.current) { await stop(); return; }
+            const peers = new globalThis.Map();
+            const closePeer = id => { const peer = peers.get(id); if (peer) { peer.off?.(); peer.pc.close(); peers.delete(id); } };
+            const off = onSnapshot(query(collection(db, 'live_signals'), where('broadcastId', '==', broadcastId)), snapshot => {
+                snapshot.docChanges().forEach(change => {
+                    const data = change.doc.data(), id = change.doc.id;
+                    if (change.type === 'removed' || data.closed) { closePeer(id); return; }
+                    if (!data.offer || peers.has(id)) return;
+                    const pc = new RTCPeerConnection({ iceServers }), peer = { pc, off: null }; peers.set(id, peer);
+                    const ref = doc(db, 'live_signals', id); const seen = new Set();
+                    pc.onicecandidate = e => { if (e.candidate) updateDoc(ref, { hostCandidates: arrayUnion(e.candidate.toJSON()) }).catch(() => {}); };
+                    (async () => {
+                        try {
+                            await pc.setRemoteDescription(data.offer);
+                            stream.getTracks().forEach(track => pc.addTrack(track, stream));
+                            await pc.setLocalDescription(await pc.createAnswer());
+                            await updateDoc(ref, { answer: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+                            if (pc.signalingState === 'closed') return;
+                            peer.off = onSnapshot(ref, snap => {
+                                const d = snap.data(); if (!d || d.closed) { closePeer(id); return; }
+                                (d.viewerCandidates || []).forEach(c => { const key = JSON.stringify(c); if (!seen.has(key)) { seen.add(key); pc.addIceCandidate(c).catch(() => {}); } });
+                            }, () => closePeer(id));
+                        } catch (_) { closePeer(id); report('Um espectador não conseguiu conectar. Verifique a rede ou configure TURN.'); }
+                    })();
+                });
+            }, () => { report('Sem permissão para conectar espectadores. Verifique as regras de live_signals.'); stop(); });
+            cleanupRef.current = () => { off(); [...peers.keys()].forEach(closePeer); };
+            stream.getVideoTracks()[0].onended = () => stop();
+            if (videoRef.current) videoRef.current.srcObject = stream;
+            setRunning(true); setMuted(false); report('Transmitindo. Os alunos recebem somente vídeo e áudio.');
+        } catch (e) { stream?.getTracks().forEach(t => t.stop()); await stop(); report(e.message || 'Não foi possível iniciar a live.'); }
+        finally { if (mounted.current) setBusy(false); }
+    };
+    useEffect(() => {
+        if (isHost || !config.enabled || !config.nativeActive || !config.broadcastId || !user?.uid) return;
+        let cancelled = false, off = () => {}, processing = false;
+        const pc = new RTCPeerConnection({ iceServers }), ref = doc(db, 'live_signals', `${user.uid}_${crypto.randomUUID()}`), seen = new Set();
+        const candidates = []; let created = false;
+        report('Conectando à transmissão...');
+        pc.addTransceiver('video', { direction: 'recvonly' }); pc.addTransceiver('audio', { direction: 'recvonly' });
+        pc.ontrack = e => { if (!cancelled && videoRef.current) { videoRef.current.srcObject = e.streams[0]; report('Ao vivo. Use os controles do vídeo para ativar o som.'); } };
+        pc.onconnectionstatechange = () => { if (['failed','disconnected'].includes(pc.connectionState)) report('Conexão interrompida. Saia e entre novamente; a rede pode exigir um servidor TURN.'); };
+        pc.onicecandidate = e => { if (!e.candidate) return; const c = e.candidate.toJSON(); if (created) updateDoc(ref, { viewerCandidates: arrayUnion(c) }).catch(() => {}); else candidates.push(c); };
+        (async () => {
+            try {
+                await pc.setLocalDescription(await pc.createOffer()); if (cancelled) return;
+                await setDoc(ref, { viewerUid: user.uid, broadcastId: config.broadcastId, hostUid: config.hostUid, offer: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }, viewerCandidates: candidates, hostCandidates: [], createdAt: serverTimestamp(), closed: false });
+                created = true;
+                if (cancelled) { await deleteDoc(ref); return; }
+                if (candidates.length) await updateDoc(ref, { viewerCandidates: arrayUnion(...candidates) });
+                off = onSnapshot(ref, async snap => {
+                    const data = snap.data(); if (!data || cancelled || processing) return; processing = true;
+                    try {
+                        if (data.answer && !pc.remoteDescription) await pc.setRemoteDescription(data.answer);
+                        if (pc.remoteDescription) (data.hostCandidates || []).forEach(c => { const key = JSON.stringify(c); if (!seen.has(key)) { seen.add(key); pc.addIceCandidate(c).catch(() => {}); } });
+                    } catch (_) { report('Não foi possível conectar ao apresentador.'); } finally { processing = false; }
+                }, () => report('Não foi possível acessar a transmissão. Verifique as permissões.'));
+            } catch (_) { report('Não foi possível conectar à live. Verifique a conexão e as permissões do Firebase.'); }
+        })();
+        return () => { cancelled = true; off(); pc.close(); if (videoRef.current) videoRef.current.srcObject = null; if (created) deleteDoc(ref).catch(() => {}); };
+    }, [isHost, config.enabled, config.nativeActive, config.broadcastId, user?.uid]);
+    return <div className="space-y-3">
+        {isHost && <div className="flex flex-wrap gap-2">{!running ? <><button disabled={busy} className="px-4 py-3 bg-indigo-600 text-white rounded-xl disabled:opacity-50" onClick={() => start('camera')}>Transmitir câmera</button><button disabled={busy} className="px-4 py-3 bg-indigo-600 text-white rounded-xl disabled:opacity-50" onClick={() => start('screen')}>Transmitir aba ou tela</button></> : <><button className="px-4 py-3 bg-slate-700 text-white rounded-xl" onClick={() => { streamRef.current?.getAudioTracks().forEach(t => t.enabled = muted); setMuted(!muted); }}>{muted ? 'Ativar áudio' : 'Silenciar áudio'}</button><button className="px-4 py-3 bg-red-600 text-white rounded-xl" onClick={stop}>Encerrar transmissão</button></>}</div>}
+        <p role="status" className="text-sm text-slate-500">{message || (!isHost && !config.nativeActive ? 'Aguardando o apresentador iniciar a live.' : 'Escolha a câmera ou a tela para iniciar.')}</p>
+        <video ref={videoRef} autoPlay muted playsInline controls={!isHost} className="w-full aspect-video bg-black rounded-xl" />
+    </div>;
+};
+
+const savedAffiliateCommission = sale => {
+    if (!sale.ref || sale.manualAttribution || (sale.attributionVersion === 2 && sale.attributionSource !== 'affiliate_link')) return 0;
+    const amount = Number(sale.affiliateCommission);
+    return Number.isFinite(amount) && amount >= 0 ? amount : 0;
+};
+const buildPlatformAffiliateLink = (base, itemId, kind, ref) => {
+    const url = new URL(base || getPlatformStudentUrl());
+    url.search = ''; url.hash = '';
+    url.searchParams.set(kind === 'course' ? 'id' : 'product', itemId);
+    if (ref) url.searchParams.set('ref', ref);
+    return url.href;
+};
+const AdminLiveSessions = ({ user, courses, showNotification }) => {
+    const config = useLiveConfiguration();
+    const [draft, setDraft] = useState({ title: 'Aula ao vivo', mode: 'meeting', courseId: '', jitsiDomain: 'meet.jit.si', videoUrl: '', loop: false, turnUrl: '', turnUsername: '', turnCredential: '' });
+    const [saving, setSaving] = useState(false), [dirty, setDirty] = useState(false);
+    useEffect(() => { if (config.loaded && !dirty) setDraft(prev => ({ ...prev, ...config })); }, [config, dirty]);
+    const edit = (key, value) => { setDirty(true); setDraft(prev => ({ ...prev, [key]: value })); };
+    const save = async enabled => {
+        if (saving) return;
+        if (enabled && draft.mode === 'video' && !platformHttpsUrl(draft.videoUrl)) return showNotification('Informe um link HTTPS do YouTube ou um vídeo direto.', 'warning');
+        if (enabled && draft.mode === 'meeting' && !/^[a-z0-9.-]+$/i.test(draft.jitsiDomain || 'meet.jit.si')) return showNotification('Servidor de reunião inválido.', 'warning');
+        setSaving(true);
+        try {
+            const changedSession = !config.enabled || draft.mode !== config.mode || draft.courseId !== config.courseId;
+            await setDoc(doc(db, 'config', 'live_sessions'), {
+                enabled, title: draft.title || 'Ao vivo', mode: draft.mode, courseId: draft.courseId || '',
+                jitsiDomain: draft.jitsiDomain || 'meet.jit.si', videoUrl: draft.videoUrl || '', loop: draft.loop === true,
+                turnUrl: draft.turnUrl || '', turnUsername: draft.turnUsername || '', turnCredential: draft.turnCredential || '',
+                roomName: changedSession ? `Aula-${crypto.randomUUID()}` : config.roomName || `Aula-${crypto.randomUUID()}`,
+                ...(!enabled || changedSession ? { nativeActive: false, broadcastId: '' } : {}),
+                updatedAt: serverTimestamp(), updatedBy: auth.currentUser.uid
+            }, { merge: true });
+            setDirty(false); showNotification(enabled ? 'Transmissões ativadas para os alunos.' : 'Aba de transmissões desativada para os alunos.', 'success');
+        } catch (_) { showNotification('Não foi possível salvar. Verifique a conexão e as permissões de config/live_sessions.', 'error'); }
+        finally { setSaving(false); }
+    };
+    const inputClass = 'w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white';
+    return <section className="space-y-6 text-slate-900 dark:text-white">
+        <header><h2 className="text-2xl font-bold">Reuniões e lives</h2><p className="text-sm text-slate-500">Ative a aba dos alunos, escolha o formato e inicie sua transmissão. Quando ativa, ela aparece no final do menu do aluno, acima de Informações. Ao desativar, a aba fica oculta.</p></header>
+        {config.error && <p role="alert" className="text-red-500">{config.error}</p>}
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 grid md:grid-cols-2 gap-4">
+            <label>Título<input className={inputClass} value={draft.title} onChange={e => edit('title', e.target.value)} /></label>
+            <label>Formato<select className={inputClass} value={draft.mode} onChange={e => edit('mode', e.target.value)}><option value="meeting">Reunião — câmera, microfone, chat e tela</option><option value="native">Live da câmera ou tela — alunos somente assistem</option><option value="video">Vídeo ou live do YouTube — alunos somente assistem</option></select></label>
+            <label>Público<select className={inputClass} value={draft.courseId} onChange={e => edit('courseId', e.target.value)}><option value="">Todos os alunos conectados</option>{courses.map(c => <option key={c.id} value={c.id}>{c.title || c.titulo}</option>)}</select></label>
+            {draft.mode === 'meeting' && <label>Servidor de reuniões<input className={inputClass} value={draft.jitsiDomain} onChange={e => edit('jitsiDomain', e.target.value.trim())} /><small className="text-slate-500">O meet.jit.si pode pedir login do organizador. Use o botão de compartilhar tela dentro da reunião.</small></label>}
+            {draft.mode === 'video' && <><label>Link do YouTube ou vídeo HTTPS<input className={inputClass} value={draft.videoUrl} onChange={e => edit('videoUrl', e.target.value.trim())} placeholder="https://www.youtube.com/watch?v=..." /></label><label className="flex items-center gap-2"><input type="checkbox" checked={draft.loop} onChange={e => edit('loop', e.target.checked)} />Repetir vídeo direto ao terminar</label></>}
+            {draft.mode === 'native' && <div className="md:col-span-2 space-y-3"><p className="text-sm text-slate-500">Mantenha esta aba aberta durante a live. Para muitos espectadores, use uma live do YouTube. Redes restritas podem exigir TURN.</p><details><summary className="cursor-pointer text-sm">Configurar servidor TURN (opcional)</summary><div className="grid md:grid-cols-3 gap-3 mt-3"><input aria-label="Servidor TURN" className={inputClass} value={draft.turnUrl} onChange={e => edit('turnUrl', e.target.value)} placeholder="turn:servidor:3478" /><input aria-label="Usuário TURN" className={inputClass} value={draft.turnUsername} onChange={e => edit('turnUsername', e.target.value)} placeholder="Usuário temporário" /><input aria-label="Credencial TURN" type="password" className={inputClass} value={draft.turnCredential} onChange={e => edit('turnCredential', e.target.value)} placeholder="Credencial temporária" /></div></details></div>}
+            <div className="md:col-span-2 flex flex-wrap gap-3 items-center"><button disabled={saving || !config.loaded || !!config.error} onClick={() => save(true)} className="px-5 py-3 rounded-xl bg-indigo-600 text-white font-bold disabled:opacity-50">{saving ? 'Salvando...' : config.enabled ? 'Salvar transmissão' : 'Ativar transmissões'}</button><button disabled={saving || !config.enabled} onClick={() => save(false)} className="px-5 py-3 rounded-xl bg-slate-700 text-white disabled:opacity-50">Desativar transmissões</button><span className="text-sm text-slate-500">{config.enabled ? 'Aba do aluno ativa' : 'Aba do aluno oculta'}</span></div>
+        </div>
+        {config.enabled && <div className="space-y-3"><h3 className="font-bold">{config.title}</h3>{config.mode === 'meeting' ? <MeetingRoom key={config.roomName} config={config} user={user} /> : config.mode === 'native' ? <NativeBroadcast config={config} user={user} isHost /> : <BroadcastPlayer config={config} />}</div>}
+    </section>;
+};
+const YouTubeIntegrationSettings = ({ showNotification }) => {
+    const [clientId, setClientId] = useState(''), [saving, setSaving] = useState(false), [ready, setReady] = useState(false);
+    useEffect(() => { return onSnapshot(doc(db, 'config', 'youtube_upload'), s => { setClientId(s.data()?.clientId || ''); setReady(true); }, () => { setReady(true); }); }, []);
+    return <section className="p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3 text-slate-900 dark:text-white">
+        <h3 className="font-bold text-lg">Upload direto para o YouTube</h3><p className="text-sm text-slate-500">Cadastre o Client ID OAuth do seu projeto Google. A conexão com a conta é feita no botão de upload de cada aula. O arquivo vai diretamente ao YouTube como não listado, sujeito às permissões do Google.</p>
+        <input aria-label="Client ID OAuth do Google" className="w-full p-3 rounded-lg bg-slate-100 dark:bg-slate-800" placeholder="...apps.googleusercontent.com" value={clientId} onChange={e => setClientId(e.target.value.trim())} />
+        <button disabled={saving || !ready} className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50" onClick={async () => {
+            if (clientId && !/^[A-Za-z0-9_.-]+\.apps\.googleusercontent\.com$/.test(clientId)) return showNotification('Client ID inválido.', 'warning');
+            setSaving(true); try { await setDoc(doc(db, 'config', 'youtube_upload'), { clientId, updatedAt: serverTimestamp() }, { merge: true }); showNotification('Configuração YouTube salva.', 'success'); } catch (_) { showNotification('Não foi possível salvar a configuração.', 'error'); } finally { setSaving(false); }
+        }}>{saving ? 'Salvando...' : 'Salvar integração YouTube'}</button>
+        <p className="text-xs text-slate-500">Ative YouTube Data API v3 e cadastre a origem HTTPS deste painel no Google Cloud. Não cole Client Secret. Projetos não auditados podem ter uploads limitados a privados.</p>
+    </section>;
+};
+const YouTubeLessonUploader = ({ lesson, onUploaded }) => {
+    const [file, setFile] = useState(null), [title, setTitle] = useState(lesson.titulo || ''), [madeForKids, setMadeForKids] = useState(''), [clientId, setClientId] = useState(''), [sdkReady, setSdkReady] = useState(false);
+    const [busy, setBusy] = useState(false), [progress, setProgress] = useState(0), [status, setStatus] = useState(''), [resultUrl, setResultUrl] = useState('');
+    const request = useRef(null), cancelled = useRef(false), alive = useRef(true), active = useRef(false);
+    useEffect(() => {
+        alive.current = true;
+        const off = onSnapshot(doc(db, 'config', 'youtube_upload'), snap => setClientId(snap.data()?.clientId || ''), () => setStatus('Configure a integração YouTube em Ajustes Gerais.'));
+        loadPlatformScript('https://accounts.google.com/gsi/client', () => !!window.google?.accounts?.oauth2).then(() => { if (alive.current) setSdkReady(true); }).catch(e => { if (alive.current) setStatus(e.message); });
+        return () => { alive.current = false; cancelled.current = true; request.current?.abort(); off(); };
+    }, []);
+    const ui = (fn, value) => { if (alive.current) fn(value); };
+    const cancel = () => { cancelled.current = true; request.current?.abort(); setStatus('Cancelando envio...'); };
+    const start = () => {
+        if (active.current) return;
+        if (!file || !title.trim() || !clientId || !sdkReady || madeForKids === '') { setStatus('Selecione o vídeo, preencha o título e o público, e configure a integração.'); return; }
+        if (!file.size || (!file.type.startsWith('video/') && !/\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(file.name))) { setStatus('Selecione um arquivo de vídeo válido.'); return; }
+        active.current = true; cancelled.current = false; setBusy(true); setProgress(0); setStatus('Autorize a conta Google que possui o canal de destino.'); setResultUrl('');
+        // O token fica apenas na memória desta operação; nunca é salvo no Firebase ou no HTML.
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({ client_id: clientId, scope: 'https://www.googleapis.com/auth/youtube.upload',
+            error_callback: () => { active.current = false; ui(setBusy, false); ui(setStatus, 'A autorização foi fechada ou bloqueada. Tente novamente.'); },
+            callback: async response => {
+                if (response.error || !response.access_token) { active.current = false; ui(setBusy, false); ui(setStatus, 'A conta não autorizou o envio.'); return; }
+                if (cancelled.current || !alive.current) { active.current = false; ui(setBusy, false); ui(setStatus, "Envio cancelado."); return; }
+                let token = response.access_token;
+                try {
+                    ui(setStatus, 'Preparando upload não listado...');
+                    const mime = file.type || 'video/mp4';
+                    const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+                        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Length': String(file.size), 'X-Upload-Content-Type': mime },
+                        body: JSON.stringify({ snippet: { title: title.trim().slice(0,100), description: lesson.descricao || '', categoryId: '27' }, status: { privacyStatus: 'unlisted', embeddable: true, selfDeclaredMadeForKids: madeForKids === 'yes' } })
+                    });
+                    if (!init.ok) { const error = await init.json().catch(() => ({})); throw new Error(error.error?.message || `YouTube recusou o início do upload (${init.status}).`); }
+                    const location = init.headers.get('Location'); if (!location) throw new Error('O Google não retornou a sessão de upload. Confira a origem OAuth e o acesso da API.');
+                    let offset = 0, result = null;
+                    while (offset < file.size) {
+                        if (cancelled.current || !alive.current) throw new Error('Envio cancelado.');
+                        const end = Math.min(offset + 8 * 1024 * 1024, file.size);
+                        result = await new Promise((resolve, reject) => {
+                            const xhr = new XMLHttpRequest(); request.current = xhr;
+                            xhr.open('PUT', location); xhr.setRequestHeader('Authorization', `Bearer ${token}`); xhr.setRequestHeader('Content-Type', mime); xhr.setRequestHeader('Content-Range', `bytes ${offset}-${end - 1}/${file.size}`); xhr.timeout = 180000;
+                            xhr.upload.onprogress = e => { if (e.lengthComputable) ui(setProgress, Math.min(99, Math.floor((offset + e.loaded) / file.size * 100))); };
+                            xhr.onerror = () => reject(new Error('Conexão interrompida. Selecione o arquivo e tente novamente.')); xhr.ontimeout = () => reject(new Error('O envio demorou demais. Tente novamente.')); xhr.onabort = () => reject(new Error('Envio cancelado.'));
+                            xhr.onload = () => {
+                                if (xhr.status === 308) { const range = xhr.getResponseHeader('Range'); const received = range?.match(/bytes=0-(\d+)/); const next = received ? Number(received[1]) + 1 : 0; if (next <= offset || next > end) return reject(new Error('O YouTube não confirmou o bloco enviado. Tente novamente.')); offset = next; resolve(null); }
+                                else if (xhr.status >= 200 && xhr.status < 300) { try { offset = file.size; resolve(JSON.parse(xhr.responseText)); } catch (_) { reject(new Error('Resposta inválida do YouTube.')); } }
+                                else { let detail; try { detail = JSON.parse(xhr.responseText).error?.message; } catch (_) {} reject(new Error(detail || `Erro no upload (${xhr.status}).`)); }
+                            };
+                            xhr.send(file.slice(offset, end));
+                        });
+                        ui(setStatus, 'Enviando diretamente ao YouTube...');
+                    }
+                    if (!result?.id) throw new Error('O YouTube não retornou o ID do vídeo. Verifique seu canal antes de tentar novamente.');
+                    const url = `https://www.youtube.com/watch?v=${result.id}`; ui(setResultUrl, url); ui(setProgress, 100);
+                    if (result.status?.privacyStatus !== 'unlisted') { ui(setStatus, 'O vídeo foi recebido, mas o YouTube não confirmou “não listado”. Verifique a restrição do projeto no Google e a privacidade no YouTube Studio. A aula não foi substituída.'); }
+                    else { if (alive.current) onUploaded(url); ui(setStatus, 'Vídeo enviado como não listado e vinculado à aula. Salve o curso. O YouTube ainda pode estar processando o vídeo.'); }
+                } catch (e) { ui(setStatus, e.message || 'Falha ao enviar vídeo.'); }
+                finally { token = null; request.current = null; active.current = false; ui(setBusy, false); }
+            }
+        });
+        tokenClient.requestAccessToken({ prompt: 'select_account' });
+    };
+    return <details className="p-3 rounded-lg border border-red-200 dark:border-red-900/40 space-y-3">
+        <summary className="cursor-pointer text-sm font-bold text-red-500">Enviar do computador para meu YouTube</summary>
+        <p className="text-xs text-slate-500 mt-3">O arquivo será enviado diretamente ao canal autorizado como não listado. Nenhum espaço do R2 será usado.</p>
+        <input aria-label="Vídeo para enviar ao YouTube" disabled={busy} type="file" accept="video/*,.mkv,.m4v" onChange={e => { setFile(e.target.files[0] || null); setResultUrl(''); }} className="block w-full text-sm" />
+        <input aria-label="Título no YouTube" disabled={busy} value={title} onChange={e => setTitle(e.target.value)} className="w-full p-2 rounded bg-slate-100 dark:bg-slate-800" placeholder="Título no YouTube" />
+        <select aria-label="Público do vídeo no YouTube" disabled={busy} value={madeForKids} onChange={e => setMadeForKids(e.target.value)} className="w-full p-2 rounded bg-slate-100 dark:bg-slate-800"><option value="">O conteúdo é feito para crianças?</option><option value="no">Não, não é feito para crianças</option><option value="yes">Sim, é feito para crianças</option></select>
+        {!clientId && <p className="text-xs text-amber-600">Configure o Client ID em Ajustes Gerais → Upload direto para o YouTube.</p>}
+        <div className="flex gap-2"><button type="button" onClick={start} disabled={busy || !sdkReady || !clientId || !file || !title.trim() || madeForKids === ''} className="px-3 py-2 rounded-lg bg-red-600 text-white text-sm disabled:opacity-50">Conectar conta e enviar</button>{busy && <button type="button" onClick={cancel} className="px-3 py-2 rounded-lg bg-slate-500 text-white">Cancelar</button>}</div>
+        {busy && <progress aria-label="Progresso do upload YouTube" className="w-full" value={progress} max="100" />}
+        <p role="status" className="text-xs text-slate-500">{status}</p>{resultUrl && <a className="text-xs text-red-500 underline" target="_blank" rel="noopener noreferrer" href={resultUrl}>Abrir vídeo enviado</a>}
+    </details>;
+};
+
 const CoursePointManagerCard = ({ curso, onSave, theme, Icons, coinNameP }) => {
     const [reward, setReward] = React.useState(curso.pointsReward || 0);
     const [cost, setCost] = React.useState(curso.pointsCost || 0);
@@ -1661,7 +2230,7 @@ const GrantAccessSystem = ({ students, courses, theme, requestConfirmation, show
     const handleGrantAccess = () => {
         if (!selectedStudent || !selectedCourseId) {
             if(showNotification) showNotification("Selecione um aluno e um curso.", "error");
-            else alert("Selecione um aluno e um curso.");
+            else window.platformAlert("Selecione um aluno e um curso.");
             return;
         }
 
@@ -4398,7 +4967,7 @@ const AdminNotificationCenter = ({ db, alunos, theme, showNotification, uploadTo
                                     <p className="text-[10px] text-slate-400 mt-2 animate-pulse">Isso pode levar alguns minutos...</p>
                                 </div>
                             ) : (
-                                <label className="cursor-pointer flex flex-col items-center justify-center w-full h-full py-4 absolute inset-0 group">
+                                (chatUploadPolicy.enabled && (<label className="cursor-pointer flex flex-col items-center justify-center w-full h-full py-4 absolute inset-0 group">
                                     <div className="w-10 h-10 bg-slate-200 dark:bg-slate-700 rounded-full flex items-center justify-center mb-2 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/30 transition-colors">
                                         <Icons.Plus className="w-5 h-5 text-slate-500 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors"/> 
                                     </div>
@@ -4414,7 +4983,7 @@ const AdminNotificationCenter = ({ db, alunos, theme, showNotification, uploadTo
                                         accept="image/*,video/*" 
                                         onChange={(e) => handleFileUpload(e.target.files)} 
                                     />
-                                </label>
+                                </label>))
                             )}
                         </div>
                     </div>
@@ -5905,8 +6474,8 @@ const AdminCancelamentosTab = ({ db, theme, Icons, showNotification, requestConf
         );
     };
 
-    const handleGiveCredits = (pedido) => {
-        const amount = prompt(`O pedido de ${pedido.userName} foi feito há mais de 7 dias. Quantos créditos deseja adicionar como compensação?`);
+    const handleGiveCredits = async (pedido) => {
+        const amount = await window.platformPrompt(`O pedido de ${pedido.userName} foi feito há mais de 7 dias. Quantos créditos deseja adicionar como compensação?`);
         if (!amount || isNaN(amount)) return;
         requestConfirmation("Conceder Créditos", `Deseja adicionar ${amount} créditos e encerrar este pedido?`, async () => {
             try {
@@ -6379,14 +6948,14 @@ const AdminMarketplaceTab = ({ db, theme, showNotification, requestConfirmation,
             return;
         }
 
-        if (window.confirm(`Tem certeza que deseja apagar DEFINITIVAMENTE os ${pendentes.length} pedidos pendentes da Loja?`)) {
+        if (await window.platformConfirm(`Tem certeza que deseja apagar DEFINITIVAMENTE os ${pendentes.length} pedidos pendentes da Loja?`)) {
             if(typeof showNotification === 'function') showNotification("Limpando pedidos da loja...", "info");
             try {
                 const deletePromises = pendentes.map(pedido => deleteDoc(doc(db, "marketplace_orders", pedido.id)));
                 await Promise.all(deletePromises);
                 if(typeof showNotification === 'function') showNotification(`✅ ${pendentes.length} pedidos da loja excluídos!`, "success");
             } catch (error) {
-                alert("Erro ao limpar pedidos.");
+                window.platformAlert("Erro ao limpar pedidos.");
             }
         }
     };
@@ -8559,7 +9128,8 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
     const [subTab, setSubTab] = useState('dashboard');
     const [linkType, setLinkType] = useState('cursos'); 
     const [products, setProducts] = useState([]);
-    const activeAffId = currentUser?.id || currentUser?.uid;
+    const activeAffiliate = (affiliates || []).find(a => a.id === currentUser?.id || (a.uid && a.uid === currentUser?.uid));
+    const activeAffId = activeAffiliate ? (activeAffiliate.active !== false ? activeAffiliate.id : null) : (currentUser?.role === 'affiliate' ? currentUser?.id : null);
     const [selectedItemDetail, setSelectedItemDetail] = useState(null);
 
     // Contexto específico para a IA (Item selecionado no Dropdown)
@@ -8784,7 +9354,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                     - Crescimento: O curso está com tração de ${studentCount > 10 ? 'Alta Escala' : 'Lançamento/Semente'}.
                     `;
 
-                    linksContexto = `[LINK DIRETO]: https://site-curso-cliente.vercel.app/?id=${item.id}&ref=${activeAffId}`;
+                    linksContexto = `[LINK DIRETO]: ${getPlatformStudentUrl()}/?id=${item.id}&ref=${activeAffId}`;
                 }
             } else if (iaContextType === 'produto' && iaContextItem) {
                 const item = products.find(p => p.id === iaContextItem);
@@ -8805,7 +9375,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                     - Total Vendido: ${studentCount} unidades.
                     - Receita Gerada: R$ ${itemRevenue.toFixed(2)}
                     `;
-                    linksContexto = `[LINK DE LOJA]: https://site-curso-cliente.vercel.app/loja?product=${item.id}&ref=${activeAffId}`;
+                    linksContexto = `[LINK DE LOJA]: ${getPlatformStudentUrl()}/?product=${item.id}&ref=${activeAffId}`;
                 }
             } else {
                 dossieContexto = (cursos || []).slice(0, 10).map(c => `CURSO: ${c.title}`).join(', ');
@@ -8881,7 +9451,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
     // --- MOTOR DE DADOS DO DASHBOARD DE PRODUTOS/AFILIADOS ---
     const stats = useMemo(() => {
         const todasVendas = [...(pagamentos || []), ...(vendasLoja || [])];
-        const vRef = todasVendas.filter(v => currentUser?.role === 'affiliate' ? v.ref === activeAffId : !!v.ref);
+        const vRef = todasVendas.filter(v => v.ref && !v.manualAttribution && (v.attributionVersion !== 2 || v.attributionSource === 'affiliate_link') && (currentUser?.role !== 'affiliate' || v.ref === activeAffId));
         const aprovadas = vRef.filter(v => ['pago', 'aprovado', 'concluído', 'approved'].includes(String(v.status).toLowerCase()));
         
         const totalVolume = aprovadas.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
@@ -8912,8 +9482,8 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
             return {
                 ...v,
                 displayPrice: itemPrice,
-                displayComm: v.affiliateCommission || calculatedComm,
-                commPercent: commPercent
+                displayComm: savedAffiliateCommission(v),
+                commPercent: Number(v.affiliatePercent) || 0
             };
         });
 
@@ -8926,6 +9496,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
 
         return {
             totalVolume,
+            totalCommission: Math.round(aprovadas.reduce((total, sale) => total + savedAffiliateCommission(sale), 0) * 100) / 100,
             count: aprovadas.length,
             chart: finalChart,
             topProds,
@@ -8944,6 +9515,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                     <p className={`text-sm ${theme.textSec} mt-1`}>
                         Acompanhe em tempo real o volume de vendas e a conversão dos seus links.
                     </p>
+                    <p className="mt-2 font-bold text-emerald-500">Comissões registradas em vendas aprovadas: {stats.totalCommission.toLocaleString('pt-BR', {style:'currency',currency:'BRL'})}</p><p className="text-xs text-slate-500">Total de comissões registradas; não representa transferência bancária nem saldo disponível para saque.</p>
                 </div>
                 
                 <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
@@ -9708,10 +10280,8 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                                 cursos.map(curso => {
                                     const qMark = String.fromCharCode(63);
                                     const andSym = String.fromCharCode(38);
-                                    const siteBaseUrl = 'https://site-curso-cliente.vercel.app';
-                                    const affUrl = activeAffId 
-                                        ? `${siteBaseUrl}/${qMark}id=${curso.id}${andSym}ref=${activeAffId}`
-                                        : 'Gerando link...';
+                                    const siteBaseUrl = getPlatformStudentUrl();
+                                    const affUrl = buildPlatformAffiliateLink(siteBaseUrl, curso.id, 'course', activeAffId);
 
                                     return (
                                         <div key={curso.id} onClick={() => setSelectedItemDetail({...curso, _type: 'curso'})} className={`${theme.card} rounded-2xl border shadow-sm overflow-hidden flex flex-col group hover:border-indigo-500/50 transition-all cursor-pointer`}>
@@ -9742,7 +10312,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                                                         </p>
                                                     </div>
                                                     <button 
-                                                        disabled={!activeAffId}
+                                                        disabled={false}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             const fallback = () => {
@@ -9774,10 +10344,8 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                                 products.map(product => {
                                     const qMark = String.fromCharCode(63);
                                     const andSym = String.fromCharCode(38);
-                                    const siteBaseUrl = 'https://site-curso-cliente.vercel.app';
-                                    const affUrl = activeAffId 
-                                        ? `${siteBaseUrl}/loja${qMark}product=${product.id}${andSym}ref=${activeAffId}`
-                                        : 'Gerando link...';
+                                    const siteBaseUrl = getPlatformStudentUrl();
+                                    const affUrl = buildPlatformAffiliateLink(siteBaseUrl, product.id, 'product', activeAffId);
 
                                     return (
                                         <div key={product.id} onClick={() => setSelectedItemDetail({...product, _type: 'produto'})} className={`${theme.card} rounded-2xl border shadow-sm overflow-hidden flex flex-col group hover:border-emerald-500/50 transition-all cursor-pointer`}>
@@ -9809,7 +10377,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                                                     </div>
 
                                                     <button 
-                                                        disabled={!activeAffId}
+                                                        disabled={false}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             const fallback = () => {
@@ -9962,12 +10530,12 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                             </button>
                             <button 
                                 onClick={() => {
-                                    const siteUrl = 'https://site-curso-cliente.vercel.app';
+                                    const siteUrl = getPlatformStudentUrl();
                                     const qMark = String.fromCharCode(63);
                                     const andSym = String.fromCharCode(38);
                                     const link = selectedItemDetail._type === 'curso' 
-                                        ? `${siteUrl}/${qMark}id=${selectedItemDetail.id}${andSym}ref=${activeAffId}`
-                                        : `${siteUrl}/loja${qMark}product=${selectedItemDetail.id}${andSym}ref=${activeAffId}`;
+                                        ? buildPlatformAffiliateLink(siteUrl, selectedItemDetail.id, 'course', activeAffId)
+                                        : buildPlatformAffiliateLink(siteUrl, selectedItemDetail.id, 'product', activeAffId);
                                     
                                     const fallback = () => {
                                         const t = document.createElement("textarea"); t.value = link; t.style.position="fixed"; t.style.left="-9999px";
@@ -9991,6 +10559,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
 };
 
 const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirmation, cursos, pagamentos, generalSettings, setGeneralSettings, uploadToCustomDrive, affiliates }) => {
+    const chatUploadPolicy = useConversationUploads();
     const [subTab, setSubTab] = useState('stats');
     const [commType, setCommType] = useState('cursos');
     const [isAddingAffiliate, setIsAddingAffiliate] = useState(false); // Estado para abrir o formulário
@@ -10027,6 +10596,19 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
     const affMediaRecorderRef = useRef(null);
     const affTimerRef = useRef(null);
     const affFileRef = useRef(null);
+    useEffect(() => {
+        if (chatUploadPolicy.enabled) return;
+        const recorder = affMediaRecorderRef.current;
+        if (recorder) {
+            recorder.onstop = null;
+            if (recorder.state !== 'inactive') recorder.stop();
+            recorder.stream?.getTracks().forEach(track => track.stop());
+        }
+        clearInterval(affTimerRef.current);
+        setIsRecordingAff(false); setAffRecordingTime(0);
+        setAffAudioBlob(null); setAffAttachment(null); if (affFileRef.current) affFileRef.current.value = "";
+    }, [chatUploadPolicy.enabled]);
+
 
     useEffect(() => {
         if (!db) return;
@@ -10128,8 +10710,10 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
 
     // --- LÓGICA DE ÁUDIO AFILIADOS ---
     const startAffRecording = async () => {
+        if (!chatUploadPolicy.enabled) return showNotification(CHAT_UPLOAD_MESSAGE, "warning");
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    try { await assertConversationUploads(); } catch (error) { stream.getTracks().forEach(track => track.stop()); throw error; }
             const recorder = new MediaRecorder(stream);
             const chunks = [];
             recorder.ondataavailable = (e) => chunks.push(e.data);
@@ -10801,10 +11385,10 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                    {pagamentos.filter(p => p.ref && p.ref !== "").length === 0 ? (
+                                    {pagamentos.filter(p => p.ref && p.ref !== "" && !p.manualAttribution && (p.attributionVersion !== 2 || p.attributionSource === "affiliate_link")).length === 0 ? (
                                         <tr><td colSpan="6" className="p-10 text-center text-slate-400 italic">Aguardando a primeira venda por link de afiliado...</td></tr>
                                     ) : (
-                                        pagamentos.filter(p => p.ref && p.ref !== "").map(sale => {
+                                        pagamentos.filter(p => p.ref && p.ref !== "" && !p.manualAttribution && (p.attributionVersion !== 2 || p.attributionSource === "affiliate_link")).map(sale => {
                                             const aff = affiliates.find(a => a.id === sale.ref || a.uid === sale.ref) || {};
                                             const statusLower = (sale.status || '').toLowerCase();
                                             const isPaid = ['pago', 'aprovado', 'concluído', 'approved'].includes(statusLower);
@@ -10813,7 +11397,7 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
                                             const course = cursos.find(c => c.id === sale.courseId) || {};
                                             const commPercent = commissions[sale.courseId] || course.affiliatePercent || 0;
                                             const calculatedComm = (parseFloat(sale.valor || 0) * (commPercent / 100));
-                                            const finalComm = sale.affiliateCommission || calculatedComm;
+                                            const finalComm = savedAffiliateCommission(sale);
 
                                             return (
                                                 <tr key={sale.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
@@ -11108,8 +11692,8 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
                                 {/* Input Premium WhatsApp Style */}
                                 <div className="p-3 bg-[#f0f2f5] dark:bg-[#202c33] shrink-0">
                                     <div className="flex items-center gap-3">
-                                        <button onClick={() => affFileRef.current?.click()} className="p-2 text-slate-500 hover:text-indigo-500 transition-colors"><Icons.Plus size={24}/></button>
-                                        <input type="file" ref={affFileRef} className="hidden" onChange={(e) => setAffAttachment(e.target.files[0])} />
+                                        {chatUploadPolicy.enabled && (<button disabled={!chatUploadPolicy.enabled} onClick={() => affFileRef.current?.click()} className="p-2 text-slate-500 hover:text-indigo-500 transition-colors"><Icons.Plus size={24}/></button>)}
+                                        {chatUploadPolicy.enabled && (<input disabled={!chatUploadPolicy.enabled} type="file" ref={affFileRef} className="hidden" onChange={(e) => setAffAttachment(e.target.files[0])} />)}
                                         
                                         <div className="flex-1 bg-white dark:bg-[#2a3942] rounded-xl flex items-center shadow-sm px-3 py-1">
                                             <input 
@@ -11123,7 +11707,7 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
                                         </div>
 
                                         <div className="flex items-center gap-2">
-                                            <Icons.Mic onClick={startAffRecording} className="text-gray-500 dark:text-gray-400 w-[26px] h-[26px] cursor-pointer hover:text-gray-700 transition-colors" />
+                                            {chatUploadPolicy.enabled && (<Icons.Mic aria-disabled={!chatUploadPolicy.enabled} opacity={chatUploadPolicy.enabled ? 1 : 0.35} onClick={startAffRecording} className="text-gray-500 dark:text-gray-400 w-[26px] h-[26px] cursor-pointer hover:text-gray-700 transition-colors" />)}
                                             <button 
                                                 onClick={handleSendAffiliateMessage}
                                                 disabled={isSendingAffMsg || isRecordingAff}
@@ -13874,6 +14458,8 @@ const AdminLevelsTab = ({ db, theme, Icons, showNotification, requestConfirmatio
 
 
 function App() {
+    usePlatformDomains();
+    const chatUploadPolicy = useConversationUploads();
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [userRole, setUserRole] = useState(null);
     const [canInstall, setCanInstall] = useState(!!window.deferredInstallPrompt);
@@ -14054,6 +14640,7 @@ const [editingCertificate, setEditingCertificate] = useState(null);
 
             // --- UPLOAD INTELIGENTE BLINDADO (Corrige Erro de Tela Branca) ---
             const uploadToCustomDrive = async (file, folderPath) => {
+                if (file && isConversationUpload(folderPath)) await assertConversationUploads();
                 if (!file) return null;
                 
                 // Verifica se a AWS foi carregada
@@ -14091,7 +14678,10 @@ const [editingCertificate, setEditingCertificate] = useState(null);
                 };
 
                 return new Promise((resolve, reject) => {
-                    s3.upload(params, (err, data) => {
+                    const upload = s3.upload(params);
+                    const stopWatchingUpload = watchConversationUpload(upload, folderPath);
+                    upload.send((err, data) => {
+                        stopWatchingUpload();
                         if (err) {
                             console.error("❌ Erro R2:", err);
                             reject(err);
@@ -14708,6 +15298,7 @@ const AVAILABLE_PERMISSIONS = [
     { id: 'financeiro', label: 'Financeiro' },
     { id: 'leads', label: 'Leads' },
     { id: 'conteudo', label: 'Conteúdo' },
+    { id: 'live_sessions', label: 'Reuniões e lives' },
     { id: 'afiliados', label: 'Afiliados/Coprodutor' },
     { id: 'produtos_links', label: 'Produtos & Links' },
     { id: 'disparo_emails', label: 'Disparo de Emails' },
@@ -14948,7 +15539,21 @@ const AVAILABLE_PERMISSIONS = [
 
 
            // --- FUNÇÕES DE ÁUDIO E ARQUIVO DO SUPORTE ---
+
+    useEffect(() => {
+        if (chatUploadPolicy.enabled) return;
+        const recorder = supportMediaRecorderRef.current;
+        if (recorder) {
+            recorder.onstop = null;
+            if (recorder.state !== 'inactive') recorder.stop();
+            recorder.stream?.getTracks().forEach(track => track.stop());
+        }
+        clearInterval(supportTimerIntervalRef.current);
+        setIsRecordingSupport(false); setSupportRecordingTime(0);
+        setSupportAudioBlob(null); setSupportAttachment(null); if (supportFileInputRef.current) supportFileInputRef.current.value = "";
+    }, [chatUploadPolicy.enabled]);
             const handleSupportFileSelect = (e) => {
+                if (!chatUploadPolicy.enabled) { e.target.value = ""; return showNotification(CHAT_UPLOAD_MESSAGE, "warning"); }
                 const file = e.target.files[0];
                 if (file) {
                     setSupportAttachment(file);
@@ -14961,6 +15566,7 @@ const AVAILABLE_PERMISSIONS = [
             };
 
             const startSupportRecording = async () => {
+        if (!chatUploadPolicy.enabled) return showNotification(CHAT_UPLOAD_MESSAGE, "warning");
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                     showNotification("O seu navegador não suporta gravação de áudio ou a conexão não é segura (HTTPS).", "error");
                     return;
@@ -14968,6 +15574,7 @@ const AVAILABLE_PERMISSIONS = [
 
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    try { await assertConversationUploads(); } catch (error) { stream.getTracks().forEach(track => track.stop()); throw error; }
                     const recorder = new MediaRecorder(stream);
                     const chunks = [];
                     
@@ -15349,7 +15956,7 @@ const AVAILABLE_PERMISSIONS = [
                     
                     // 👇 CRIA UM CRONÔMETRO DE 10 SEGUNDOS
                     // Se o celular tentar travar o Firebase, o cronômetro vence e destrava a tela
-                    const loginPromise = signInWithEmailAndPassword(auth, emailLimpo, password);
+                    const loginPromise = guardedPasswordSignIn(auth, emailLimpo, password);
                     const timeoutPromise = new Promise((_, reject) => 
                         setTimeout(() => reject(new Error("TIMEOUT")), 10000)
                     );
@@ -15534,6 +16141,7 @@ const AVAILABLE_PERMISSIONS = [
                         
                         const docRef = doc(db, "transactions", transaction.id);
                         await updateDoc(docRef, {
+                            ...(novoStatus === "pago" ? { paidAt: transaction.paidAt || mpData?.date_approved || serverTimestamp() } : {}),
                             status: novoStatus,
                             mpPaymentId: mpData ? String(mpData.id) : transaction.mpPaymentId,
                             updatedAt: serverTimestamp()
@@ -15624,7 +16232,7 @@ const AVAILABLE_PERMISSIONS = [
             if (typeof showNotification === 'function') {
                 showNotification("Nenhum pedido pendente encontrado para limpar.", "warning");
             } else {
-                alert("Nenhum pedido pendente para limpar.");
+                window.platformAlert("Nenhum pedido pendente para limpar.");
             }
             return;
         }
@@ -16340,7 +16948,7 @@ const handleSendPasswordReset = (email) => {
 
                             // Tenta logar só para inicializar a instância (ignora erro)
 
-                            await signInWithEmailAndPassword(secondaryAuth, email, password).catch(() => {});
+                            // A criação de usuário não exige autenticar a senha do administrador na instância secundária.
 
 
 
@@ -18897,29 +19505,7 @@ case 'niveis':
                                                             </td>
                                                             <td className="px-6 py-4 text-right">
                                                                 <div className="flex justify-end gap-2 items-center">
-                                                                    {/* BOTÃO ATRIBUIR AFILIADO (MANUAL) */}
-                                                                    {!pg.ref && userRole === 'admin' && (
-                                                                        <button 
-                                                                            onClick={() => {
-                                                                                const affId = prompt("Digite o ID ou Email do Afiliado para atribuir esta venda:");
-                                                                                if(affId) {
-                                                                                    requestConfirmation("Atribuir Venda", `Deseja atribuir esta venda ao afiliado ${affId}?`, async () => {
-                                                                                        const targetAff = affiliates.find(a => a.id === affId || a.email === affId);
-                                                                                        await updateDoc(doc(db, "transactions", pg.id), { 
-                                                                                            ref: targetAff ? targetAff.id : affId,
-                                                                                            manualAttribution: true,
-                                                                                            updatedAt: serverTimestamp()
-                                                                                        });
-                                                                                        showNotification("Venda atribuída com sucesso!", "success");
-                                                                                    });
-                                                                                }
-                                                                            }}
-                                                                            className="p-2 text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors" 
-                                                                            title="Atribuir a Afiliado"
-                                                                        >
-                                                                            <Icons.Users className="w-4 h-4" />
-                                                                        </button>
-                                                                    )}
+                                                                    {/* Compras diretas não recebem atribuição manual de afiliado. */}
 
                                                                     {pg.ref && (
                                                                         <div className="p-2 text-emerald-500" title="Venda já atribuída a um afiliado">
@@ -19216,6 +19802,9 @@ case 'categorias':
 
 
 
+                    case 'live_sessions':
+                        if (userRole !== 'admin') return <p>Acesso restrito ao administrador.</p>;
+                        return <AdminLiveSessions user={currentUserData} courses={cursos} showNotification={showNotification} />;
                     case 'conteudo':
 
                          return (
@@ -19576,6 +20165,10 @@ case 'categorias':
     rows="2" 
 />
 
+{aula.tipo === 'video' && <div className="space-y-3">
+    <label className="block text-xs text-slate-500">Link do vídeo (YouTube, Vimeo ou URL direta)<input type="url" value={aula.conteudo || ''} onChange={e => updateLesson(modulo.id, aula.id, 'conteudo', e.target.value)} className="w-full mt-1 p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700" placeholder="https://www.youtube.com/watch?v=..." /></label>
+    <YouTubeLessonUploader key={aula.id} lesson={aula} onUploaded={url => updateLesson(modulo.id, aula.id, 'conteudo', url)} />
+</div>}
 <div className="w-full">{!aula.conteudo ? (
 
     <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg cursor-pointer bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group/upload relative">
@@ -19631,7 +20224,7 @@ case 'categorias':
 
 
 
-) : (<div className="space-y-2">{aula.tipo === 'video' ? (<div className="relative rounded-lg overflow-hidden bg-black aspect-video"><video src={aula.conteudo} controls className="w-full h-full object-contain" /></div>) : (<div className="relative rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 h-64 bg-slate-100 dark:bg-slate-900"><iframe src={aula.conteudo} className="w-full h-full" title="PDF Preview"></iframe></div>)}<div className="flex justify-between items-center mt-2"><span className="text-xs text-green-500 font-medium flex items-center gap-1"><Icons.CheckCircle className="w-3 h-3" /> Salvo</span><label className="cursor-pointer text-xs text-indigo-500 hover:underline font-bold flex items-center gap-1"><Icons.Upload className="w-3 h-3" /> Substituir<input type="file" className="hidden" onChange={(e) => uploadFile(e.target.files[0], modulo.id, aula.id)} /></label></div></div>)}</div> {/* ================= INÍCIO: ÁREA DE MATERIAIS COMPLEMENTARES ================= */}
+) : (<div className="space-y-2">{aula.tipo === 'video' ? (<div className="relative rounded-lg overflow-hidden bg-black aspect-video">{platformVideoId(aula.conteudo) ? <iframe title={aula.titulo || 'Vídeo'} src={`https://www.youtube.com/embed/${platformVideoId(aula.conteudo)}`} className="w-full h-full" allow="encrypted-media; fullscreen; picture-in-picture" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen /> : <video src={aula.conteudo} controls className="w-full h-full object-contain" />}</div>) : (<div className="relative rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 h-64 bg-slate-100 dark:bg-slate-900"><iframe src={aula.conteudo} className="w-full h-full" title="PDF Preview"></iframe></div>)}<div className="flex justify-between items-center mt-2"><span className="text-xs text-green-500 font-medium flex items-center gap-1"><Icons.CheckCircle className="w-3 h-3" /> Salvo</span><label className="cursor-pointer text-xs text-indigo-500 hover:underline font-bold flex items-center gap-1"><Icons.Upload className="w-3 h-3" /> Substituir<input type="file" className="hidden" onChange={(e) => uploadFile(e.target.files[0], modulo.id, aula.id)} /></label></div></div>)}</div> {/* ================= INÍCIO: ÁREA DE MATERIAIS COMPLEMENTARES ================= */}
    {/* ================= INÍCIO: ÁREA DE MATERIAIS COMPLEMENTARES ================= */}
     <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700/50">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
@@ -20978,9 +21571,10 @@ case 'categorias':
         )}
     </div>
     
+    <ConversationUploadNotice policy={chatUploadPolicy} />
     {/* Botão de Anexo */}
-    <Icons.Paperclip onClick={() => supportFileInputRef.current?.click()} className="text-gray-500 dark:text-gray-400 w-6 h-6 cursor-pointer hover:text-gray-700" />
-    <input type="file" ref={supportFileInputRef} onChange={handleSupportFileSelect} className="hidden" accept="image/*,video/*,.pdf,.doc,.docx" />
+    {chatUploadPolicy.enabled && (<Icons.Paperclip onClick={() => chatUploadPolicy.enabled && supportFileInputRef.current?.click()} aria-disabled={!chatUploadPolicy.enabled} opacity={chatUploadPolicy.enabled ? 1 : 0.35} className="text-gray-500 dark:text-gray-400 w-6 h-6 cursor-pointer hover:text-gray-700" />)}
+    {chatUploadPolicy.enabled && (<input disabled={!chatUploadPolicy.enabled} type="file" ref={supportFileInputRef} onChange={handleSupportFileSelect} className="hidden" accept="image/*,video/*,.pdf,.doc,.docx" />)}
     
     {/* Barra de Digitação */}
     <form onSubmit={handleAdminSendMessage} className="flex-1 bg-white dark:bg-[#2a3942] rounded-xl flex items-center shadow-sm h-full px-2">
@@ -20997,10 +21591,10 @@ case 'categorias':
     {/* Botões de Mic e Send Fixos no canto direito (Lado a Lado) */}
     <div className="flex items-center gap-2 shrink-0">
         {/* Ícone de Áudio */}
-        <Icons.Mic 
-            onClick={startSupportRecording} 
+        {chatUploadPolicy.enabled && (<Icons.Mic 
+            aria-disabled={!chatUploadPolicy.enabled} opacity={chatUploadPolicy.enabled ? 1 : 0.35} onClick={startSupportRecording} 
             className="text-gray-500 dark:text-gray-400 w-[26px] h-[26px] cursor-pointer hover:text-gray-700 transition-colors" 
-        />
+        />)}
         
         {/* Botão de Enviar */}
         <button 
@@ -21081,6 +21675,7 @@ case 'acelerador':
 
 
 
+                                    {userRole === 'admin' && <><ChatUploadSettings theme={theme} showNotification={showNotification} /><YouTubeIntegrationSettings showNotification={showNotification} /><PlatformDomainSettings showNotification={showNotification} /></>}
                                     {/* BLOCO 1: PERSONALIZAÇÃO DE TÍTULOS */}
 
                                     <div className={`${theme.card} p-8`}>
@@ -22859,7 +23454,7 @@ case 'acelerador':
                                                     src={
                                                         window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost' 
                                                         ? `/index.busines.cliente1.html?preview=${previewTab}` 
-                                                        : `https://site-curso-cliente.vercel.app/?preview=${previewTab}`
+                                                        : `${getPlatformStudentUrl()}/?preview=${previewTab}`
                                                     }
                                                     className={`absolute inset-0 w-full h-full border-none bg-siteBg-light dark:bg-siteBg-dark transition-opacity duration-700 ${iframeLoaded ? 'opacity-100' : 'opacity-0'}`}
                                                     title="Live Preview"
@@ -23389,6 +23984,7 @@ case 'acelerador':
                             <NavItem id="leads" icon={Icons.Users} label="Leads" badge={0} />
 
                             <NavItem id="conteudo" icon={Icons.BookOpen} label="Conteúdo" badge={0} />
+                            {userRole === "admin" && <NavItem id="live_sessions" icon={Icons.Video} label="Reuniões e lives" badge={0} />}
 
                             <NavItem id="afiliados" icon={Icons.Users} label="Afiliados/Coprodutor" badge={0} />
                             <NavItem id="produtos_links" icon={Icons.Tag} label="Produtos & Links" badge={0} />
