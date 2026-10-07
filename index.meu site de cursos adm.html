@@ -1507,9 +1507,10 @@ const YouTubeIntegrationSettings = ({ showNotification }) => {
         <p className="text-xs text-slate-500">Ative YouTube Data API v3 e cadastre a origem HTTPS deste painel no Google Cloud. Não cole Client Secret. Projetos não auditados podem ter uploads limitados a privados.</p>
     </section>;
 };
-const YouTubeLessonUploader = ({ lesson, onUploaded }) => {
+const YouTubeLessonUploader = ({ lesson, onUploaded, onBusyChange }) => {
     const [file, setFile] = useState(null), [title, setTitle] = useState(lesson.titulo || ''), [madeForKids, setMadeForKids] = useState(''), [clientId, setClientId] = useState(''), [sdkReady, setSdkReady] = useState(false);
     const [busy, setBusy] = useState(false), [progress, setProgress] = useState(0), [status, setStatus] = useState(''), [resultUrl, setResultUrl] = useState('');
+    useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
     const request = useRef(null), cancelled = useRef(false), alive = useRef(true), active = useRef(false);
     useEffect(() => {
         alive.current = true;
@@ -1572,7 +1573,7 @@ const YouTubeLessonUploader = ({ lesson, onUploaded }) => {
         });
         tokenClient.requestAccessToken({ prompt: 'select_account' });
     };
-    return <details className="p-3 rounded-lg border border-red-200 dark:border-red-900/40 space-y-3">
+    return <details open className="p-4 rounded-xl border border-red-200 dark:border-red-900/40 space-y-3 bg-white dark:bg-slate-900">
         <summary className="cursor-pointer text-sm font-bold text-red-500">Enviar do computador para meu YouTube</summary>
         <p className="text-xs text-slate-500 mt-3">O arquivo será enviado diretamente ao canal autorizado como não listado. Nenhum espaço do R2 será usado.</p>
         <input aria-label="Vídeo para enviar ao YouTube" disabled={busy} type="file" accept="video/*,.mkv,.m4v" onChange={e => { setFile(e.target.files[0] || null); setResultUrl(''); }} className="block w-full text-sm" />
@@ -1583,6 +1584,64 @@ const YouTubeLessonUploader = ({ lesson, onUploaded }) => {
         {busy && <progress aria-label="Progresso do upload YouTube" className="w-full" value={progress} max="100" />}
         <p role="status" className="text-xs text-slate-500">{status}</p>{resultUrl && <a className="text-xs text-red-500 underline" target="_blank" rel="noopener noreferrer" href={resultUrl}>Abrir vídeo enviado</a>}
     </details>;
+};
+
+
+const LessonVideoSource = ({ lesson, onUploaded, onR2Upload, uploading, progress, anotherUpload }) => {
+    const [destination, setDestination] = useState(() => platformVideoId(lesson.conteudo) ? 'youtube' : '');
+    const [youtubeBusy, setYoutubeBusy] = useState(false);
+    const locked = uploading || youtubeBusy;
+    const youtubeId = platformVideoId(lesson.conteudo);
+    const choices = [
+        { id: 'youtube', icon: '▶', name: 'YouTube', label: 'Vídeo no seu canal', description: 'Conecte sua conta e envie o vídeo para o YouTube.', note: 'Não ocupa espaço no R2', color: 'red' },
+        { id: 'r2', icon: '☁', name: 'Cloudflare R2', label: 'Arquivo na plataforma', description: 'Envie o vídeo para o armazenamento do seu site.', note: 'Usa o espaço do seu R2', color: 'indigo' }
+    ];
+    const inputClass = 'w-full mt-2 p-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500';
+    return <section className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+        <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800">
+            <p className="text-[10px] font-bold tracking-widest uppercase text-indigo-500 mb-1">VÍDEO DA AULA</p>
+            <h4 className="text-lg font-bold">Onde você quer guardar o vídeo?</h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Escolha o destino. O aluno assiste pela página do curso nas duas opções.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4" role="group" aria-label="Destino do vídeo da aula">
+                {choices.map(choice => {
+                    const selected = destination === choice.id;
+                    const accent = choice.id === 'youtube' ? 'border-red-500 bg-red-50 dark:bg-red-950/30 ring-1 ring-red-500' : 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 ring-1 ring-indigo-500';
+                    return <button key={choice.id} type="button" aria-pressed={selected} disabled={locked} onClick={() => setDestination(choice.id)} className={`text-left p-4 rounded-xl border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed ${selected ? accent : 'border-slate-200 dark:border-slate-700 hover:border-slate-400 bg-white dark:bg-slate-800/40'}`}>
+                        <span className="flex items-center justify-between gap-2"><span className={`inline-flex items-center justify-center w-10 h-10 rounded-xl text-xl ${choice.id === 'youtube' ? 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400' : 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-400'}`} aria-hidden="true">{choice.icon}</span><span className={`text-[10px] font-bold rounded-full px-2 py-1 ${selected ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-400'}`}>{selected ? 'Selecionado ✓' : 'Selecionar'}</span></span>
+                        <span className="block font-bold text-base mt-3">{choice.name}</span><span className="block text-xs font-medium mt-1">{choice.label}</span>
+                        <span className="block text-xs leading-relaxed text-slate-500 dark:text-slate-400 mt-2">{choice.description}</span>
+                        <span className={`block text-[11px] font-semibold mt-3 ${choice.id === 'youtube' ? 'text-red-600 dark:text-red-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{choice.note}</span>
+                    </button>;
+                })}
+            </div>
+            <button type="button" disabled={locked} aria-pressed={destination === 'link'} onClick={() => setDestination('link')} className="mt-3 text-xs font-semibold text-indigo-600 dark:text-indigo-400 underline underline-offset-4 disabled:opacity-50">Já tenho um link de vídeo</button>
+        </div>
+        <div className="p-4 sm:p-5 bg-slate-50/70 dark:bg-slate-800/20">
+            {!destination && <p className="text-sm text-slate-500 dark:text-slate-400">↑ Selecione uma das opções acima para começar o envio.</p>}
+            <div hidden={destination !== 'youtube'}>
+                <p className="text-xs text-red-700 dark:text-red-300 mb-3">Destino: seu canal do YouTube. O vídeo precisa estar Não listado ou Público, com incorporação permitida.</p>
+                <YouTubeLessonUploader lesson={lesson} onUploaded={onUploaded} onBusyChange={setYoutubeBusy} />
+            </div>
+            {destination === 'r2' && <div className="space-y-3">
+                <div><h5 className="font-bold text-sm">Enviar arquivo para o Cloudflare R2</h5><p className="text-xs text-slate-500 dark:text-slate-400 mt-1">O vídeo fica no armazenamento da plataforma. Não será enviado ao YouTube.</p></div>
+                <label className={`block rounded-xl border-2 border-dashed border-indigo-300 dark:border-indigo-700 p-5 text-center bg-indigo-50/50 dark:bg-indigo-950/20 ${locked || anotherUpload ? 'opacity-60 cursor-wait' : 'cursor-pointer hover:border-indigo-500'}`}>
+                    <span className="block text-2xl text-indigo-500 mb-2" aria-hidden="true">☁</span><span className="block font-bold text-sm text-indigo-600 dark:text-indigo-300">{uploading ? 'Enviando para o R2…' : lesson.conteudo ? 'Escolher novo vídeo para o R2' : 'Escolher vídeo do computador'}</span>
+                    <span className="block text-xs text-slate-500 dark:text-slate-400 mt-2">Prefira MP4 para compatibilidade com os navegadores.</span>
+                    <input type="file" accept="video/*,.mkv,.m4v" aria-label="Escolher vídeo para o Cloudflare R2" disabled={locked || anotherUpload} className="block w-full mt-4 text-xs file:mr-3 file:rounded-lg file:border-0 file:px-3 file:py-2 file:bg-indigo-600 file:text-white" onChange={e => { const file = e.target.files?.[0]; if (file) onR2Upload(file); e.target.value = ''; }} />
+                </label>
+                {uploading && <div role="status"><div className="flex justify-between text-xs mb-2"><span>Upload para o Cloudflare R2</span><strong>{progress}%</strong></div><progress aria-label="Progresso do envio para R2" className="w-full accent-indigo-600" max="100" value={progress} /></div>}
+                {anotherUpload && !uploading && <p className="text-xs text-amber-600">Aguarde o envio da outra aula terminar.</p>}
+                {lesson.conteudo && <p className="text-xs text-slate-500">O vídeo atual será substituído quando o envio terminar.</p>}
+            </div>}
+            {destination === 'link' && <label className="block text-sm font-semibold">Cole o link do vídeo<input type="url" aria-label="Link do vídeo da aula" value={lesson.conteudo || ''} onChange={e => onUploaded(e.target.value)} placeholder="https://www.youtube.com/watch?v=..." className={inputClass} /><span className="block mt-2 text-xs font-normal text-slate-500">YouTube, Vimeo ou endereço direto de um vídeo.</span></label>}
+        </div>
+        {lesson.conteudo && <div className="px-4 sm:px-5 pb-5 space-y-3">
+            <div className="flex flex-wrap justify-between gap-2 items-center"><span className="text-xs font-bold">Vídeo vinculado à aula</span><span className={`text-[10px] font-bold px-2 py-1 rounded-full ${youtubeId ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{youtubeId ? 'YouTube' : 'Arquivo / link externo'}</span></div>
+            <div className="rounded-xl overflow-hidden bg-black aspect-video">{youtubeId ? <iframe title={lesson.titulo || 'Prévia da aula'} src={`https://www.youtube.com/embed/${youtubeId}`} className="w-full h-full" allow="encrypted-media; fullscreen; picture-in-picture" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen /> : /vimeo\.com\//i.test(lesson.conteudo) ? <p className="text-white text-sm p-6">Vídeo Vimeo vinculado. A reprodução estará disponível na página da aula.</p> : <video src={lesson.conteudo} controls preload="metadata" className="w-full h-full object-contain" />}</div>
+            {youtubeId && <a href={`https://studio.youtube.com/video/${youtubeId}/edit`} target="_blank" rel="noopener noreferrer" className="block text-xs text-red-600 dark:text-red-400 underline">Conferir visibilidade e processamento no YouTube Studio</a>}
+            <p className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 p-3 text-xs text-amber-800 dark:text-amber-200"><strong>Último passo:</strong> clique em <strong>Salvar Alterações</strong> no curso para disponibilizar o vídeo aos alunos.</p>
+        </div>}
+    </section>;
 };
 
 const CoursePointManagerCard = ({ curso, onSave, theme, Icons, coinNameP }) => {
@@ -20178,12 +20237,8 @@ case 'categorias':
     rows="2" 
 />
 
-{aula.tipo === 'video' && <div className="space-y-3">
-    <label className="block text-xs text-slate-500">Link do vídeo (YouTube, Vimeo ou URL direta)<input type="url" value={aula.conteudo || ''} onChange={e => updateLesson(modulo.id, aula.id, 'conteudo', e.target.value)} className="w-full mt-1 p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700" placeholder="https://www.youtube.com/watch?v=..." /></label>
-    {platformVideoId(aula.conteudo) && <p className="text-xs text-amber-600">Vídeo do YouTube: salve as alterações do curso para atualizar a aula dos alunos. O vídeo precisa estar processado, Não listado ou Público e com incorporação permitida. <a href={`https://studio.youtube.com/video/${platformVideoId(aula.conteudo)}/edit`} target="_blank" rel="noopener noreferrer" className="underline">Conferir no YouTube Studio</a></p>}
-    <YouTubeLessonUploader key={aula.id} lesson={aula} onUploaded={url => updateLesson(modulo.id, aula.id, 'conteudo', url)} />
-</div>}
-<div className="w-full">{!aula.conteudo ? (
+{aula.tipo === 'video' && <LessonVideoSource key={aula.id} lesson={aula} onUploaded={url => updateLesson(modulo.id, aula.id, 'conteudo', url)} onR2Upload={file => uploadFile(file, modulo.id, aula.id)} uploading={uploadingFileId === aula.id} anotherUpload={uploadingFileId != null && uploadingFileId !== aula.id} progress={uploadProgress} />}
+{aula.tipo !== 'video' && <div className="w-full">{!aula.conteudo ? (
 
     <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg cursor-pointer bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group/upload relative">
 
@@ -20238,7 +20293,7 @@ case 'categorias':
 
 
 
-) : (<div className="space-y-2">{aula.tipo === 'video' ? (<div className="relative rounded-lg overflow-hidden bg-black aspect-video">{platformVideoId(aula.conteudo) ? <iframe title={aula.titulo || 'Vídeo'} src={`https://www.youtube.com/embed/${platformVideoId(aula.conteudo)}`} className="w-full h-full" allow="encrypted-media; fullscreen; picture-in-picture" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen /> : <video src={aula.conteudo} controls className="w-full h-full object-contain" />}</div>) : (<div className="relative rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 h-64 bg-slate-100 dark:bg-slate-900"><iframe src={aula.conteudo} className="w-full h-full" title="PDF Preview"></iframe></div>)}<div className="flex justify-between items-center mt-2"><span className="text-xs text-green-500 font-medium flex items-center gap-1"><Icons.CheckCircle className="w-3 h-3" /> Salvo</span><label className="cursor-pointer text-xs text-indigo-500 hover:underline font-bold flex items-center gap-1"><Icons.Upload className="w-3 h-3" /> Substituir<input type="file" className="hidden" onChange={(e) => uploadFile(e.target.files[0], modulo.id, aula.id)} /></label></div></div>)}</div> {/* ================= INÍCIO: ÁREA DE MATERIAIS COMPLEMENTARES ================= */}
+) : (<div className="space-y-2">{aula.tipo === 'video' ? (<div className="relative rounded-lg overflow-hidden bg-black aspect-video">{platformVideoId(aula.conteudo) ? <iframe title={aula.titulo || 'Vídeo'} src={`https://www.youtube.com/embed/${platformVideoId(aula.conteudo)}`} className="w-full h-full" allow="encrypted-media; fullscreen; picture-in-picture" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen /> : <video src={aula.conteudo} controls className="w-full h-full object-contain" />}</div>) : (<div className="relative rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 h-64 bg-slate-100 dark:bg-slate-900"><iframe src={aula.conteudo} className="w-full h-full" title="PDF Preview"></iframe></div>)}<div className="flex justify-between items-center mt-2"><span className="text-xs text-green-500 font-medium flex items-center gap-1"><Icons.CheckCircle className="w-3 h-3" /> Salvo</span><label className="cursor-pointer text-xs text-indigo-500 hover:underline font-bold flex items-center gap-1"><Icons.Upload className="w-3 h-3" /> Substituir<input type="file" className="hidden" onChange={(e) => uploadFile(e.target.files[0], modulo.id, aula.id)} /></label></div></div>)}</div>} {/* ================= INÍCIO: ÁREA DE MATERIAIS COMPLEMENTARES ================= */}
    {/* ================= INÍCIO: ÁREA DE MATERIAIS COMPLEMENTARES ================= */}
     <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700/50">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
