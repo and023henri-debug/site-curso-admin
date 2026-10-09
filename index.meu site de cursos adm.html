@@ -805,6 +805,7 @@ if(_isIos && !_isStandalone){
 
        // Importações do Firebase
         import { initializeApp } from 'firebase/app';
+import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-functions.js';
         import { 
             initializeAuth, browserLocalPersistence, getAuth,
             signInWithEmailAndPassword, signOut, onAuthStateChanged, 
@@ -14525,6 +14526,105 @@ const AdminLevelsTab = ({ db, theme, Icons, showNotification, requestConfirmatio
 
 
 
+// Acessos e Inatividade — decisões e relógio confiáveis ficam nas Cloud Functions.
+const inactivityAdminCall = async (name, data = {}) => (await httpsCallable(getFunctions(app, 'southamerica-east1'), name)(data)).data;
+const inactivityUnits = { minutes:'minutos', hours:'horas', days:'dias', weeks:'semanas', months:'meses', years:'anos' };
+function inactivityDuration(ms) {
+    if (ms == null) return 'Sem acesso registrado';
+    const sec = Math.max(0,Math.floor(ms/1000));
+    if (sec < 60) return `${sec} segundos`;
+    if (sec < 3600) return `${Math.floor(sec/60)} min`;
+    if (sec < 86400) return `${Math.floor(sec/3600)} h ${Math.floor(sec%3600/60)} min`;
+    return `${Math.floor(sec/86400)} dias e ${Math.floor(sec%86400/3600)} h`;
+}
+const inactivityDate = value => value ? new Date(value).toLocaleString('pt-BR') : '—';
+function InactivityAdmin({ theme }) {
+    const [rows,setRows] = React.useState([]);
+    const [policy,setPolicy] = React.useState(null);
+    const [draft,setDraft] = React.useState(null);
+    const [dirty,setDirty] = React.useState(false);
+    const dirtyRef = React.useRef(false);
+    const [error,setError] = React.useState('');
+    const [notice,setNotice] = React.useState('');
+    const [loading,setLoading] = React.useState(true);
+    const [busy,setBusy] = React.useState('');
+    const [search,setSearch] = React.useState('');
+    const [filter,setFilter] = React.useState('all');
+    const [now,setNow] = React.useState(Date.now());
+    const offset = React.useRef(0), fetching = React.useRef(false), alive = React.useRef(true);
+    const load = async () => {
+        if (fetching.current) return;
+        fetching.current = true;
+        try {
+            let cursor = null, all = [], first;
+            do {
+                const result = await inactivityAdminCall('inactivityAdminList',{cursor});
+                if (!alive.current) return;
+                if (!first) first = result;
+                all.push(...result.rows); cursor = result.cursor;
+            } while (cursor);
+            offset.current = first.serverNow-Date.now();
+            setRows(all); setPolicy(first.policy); setNow(Date.now()+offset.current);
+            if (!dirtyRef.current) setDraft(first.policy);
+            setError('');
+        } catch(e) { if (alive.current) setError(`Não foi possível consultar a automação. ${e.message || 'Tente novamente.'}`); }
+        finally { fetching.current = false; if (alive.current) setLoading(false); }
+    };
+    React.useEffect(() => {
+        alive.current=true; load();
+        const timer=setInterval(load,30000), clock=setInterval(()=>setNow(Date.now()+offset.current),1000);
+        return ()=>{alive.current=false;clearInterval(timer);clearInterval(clock);};
+    },[]);
+    const edit = change => { dirtyRef.current=true;setDirty(true);setNotice('');setDraft(d=>({...d,...change})); };
+    const save = async e => {
+        e.preventDefault(); setBusy('save');setNotice('');setError('');
+        try {
+            const result = await inactivityAdminCall('inactivitySavePolicy',draft);
+            dirtyRef.current=false;setDirty(false);setPolicy(result.policy);setDraft(result.policy);
+            setNotice('Regra salva. A verificação ocorre no próximo acesso e automaticamente a cada minuto.');
+            await load();
+        } catch(e) { setError(e.message || 'Não foi possível salvar.'); }
+        finally {setBusy('');}
+    };
+    const review = async (row,decision) => {
+        setBusy(row.uid);setError('');setNotice('');
+        try {
+            await inactivityAdminCall('inactivityReviewUnlock',{uid:row.uid,decision,requestedAt:row.request.requestedAt});
+            setNotice(decision==='approve' ? 'Desbloqueio aprovado. Um novo prazo começa agora. Bloqueios manuais são preservados.' : 'Solicitação recusada. O aluno continua bloqueado.');
+            await load();
+        } catch(e) {setError(e.message || 'Não foi possível analisar.');}
+        finally {setBusy('');}
+    };
+    const pending=rows.filter(r=>r.request?.status==='pending').length;
+    const blocked=rows.filter(r=>r.inactivityBlocked).length;
+    const visible=rows.filter(r=>(filter==='all'||(filter==='pending'&&r.request?.status==='pending')||(filter==='blocked'&&r.inactivityBlocked)||(filter==='active'&&!r.inactivityBlocked&&!r.manualBlocked)) && `${r.name} ${r.email} ${r.uid}`.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')))
+        .sort((a,b)=>Number(b.request?.status==='pending')-Number(a.request?.status==='pending') || (a.lastAccessAt||0)-(b.lastAccessAt||0));
+    const input='w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2.5 text-slate-900 dark:text-white';
+    return <div className={`space-y-6 pb-12 ${theme.text}`}>
+        <div><h2 className="text-2xl font-bold">Acessos e Inatividade</h2><p className="mt-2 text-sm opacity-70">Acompanhe o último acesso e aprove solicitações de desbloqueio.</p></div>
+        {error && <div role="alert" className="p-4 border border-red-300 bg-red-50 text-red-800 rounded-xl">{error}<button onClick={load} className="underline ml-3">Atualizar</button></div>}
+        {notice && <div role="status" className="p-4 bg-emerald-50 text-emerald-800 rounded-xl">{notice}</div>}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">{[['Alunos',rows.length],['Bloqueados por inatividade',blocked],['Solicitações pendentes',pending]].map(([title,count])=><div key={title} className={`${theme.card} border rounded-2xl p-5`}><p className="text-sm opacity-70">{title}</p><p className="text-3xl font-bold mt-2">{count}</p></div>)}</div>
+        {draft && <form onSubmit={save} className={`${theme.card} border rounded-2xl p-5 space-y-4`}>
+            <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-bold text-lg">Bloqueio automático</h3><span className={`px-3 py-1 rounded-full text-xs font-bold ${policy.enabled?'bg-emerald-100 text-emerald-800':'bg-slate-200 text-slate-700'}`}>{policy.enabled?'Regra ativa':'Regra desativada'}</span></div>
+            <label className="flex items-center gap-3"><input type="checkbox" checked={draft.enabled} onChange={e=>edit({enabled:e.target.checked})}/>Ativar bloqueio por falta de acesso</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><label className="text-sm">Tempo sem acessar<input required type="number" min="1" max="10000" step="1" className={input+' mt-2'} value={draft.value} onChange={e=>edit({value:e.target.value})}/></label><label className="text-sm">Unidade<select className={input+' mt-2'} value={draft.unit} onChange={e=>edit({unit:e.target.value})}>{Object.entries(inactivityUnits).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label></div>
+            <p className="text-sm opacity-70">Ao atingir {draft.value || '…'} {inactivityUnits[draft.unit]} sem acessar, o aluno precisará solicitar liberação. Meses e anos seguem o calendário. Reduzir o prazo pode bloquear contas já inativas.</p>
+            <p className="text-xs opacity-70">Contas sem histórico começam a contagem na ativação da regra ou no início do acompanhamento, o que ocorrer depois. Desativar a regra interrompe novos bloqueios; os já aplicados precisam de aprovação. A página do aluno ou a janela externa da aula visível registra presença a cada 20 segundos.</p>
+            {dirty && policy.revision!==draft.revision && <p role="alert" className="text-amber-600">A regra mudou em outro painel. Descarte suas alterações e carregue a versão atual antes de salvar.</p>}
+            <div className="flex flex-wrap gap-3"><button disabled={!!busy||!dirty} className="px-5 py-3 rounded-xl bg-indigo-600 text-white font-bold disabled:opacity-50">{busy==='save'?'Salvando…':'Salvar regra'}</button>{dirty && <button type="button" onClick={()=>{dirtyRef.current=false;setDirty(false);setDraft(policy);}} className="px-4 py-2 underline">Descartar alterações</button>}</div>
+        </form>}
+        <div className={`${theme.card} border rounded-2xl p-5 space-y-4`}>
+            <div className="flex flex-col md:flex-row gap-3"><input aria-label="Buscar alunos" className={input} placeholder="Buscar por nome, e-mail ou ID" value={search} onChange={e=>setSearch(e.target.value)}/><select aria-label="Filtrar situação" className={input} value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Todos os alunos</option><option value="pending">Solicitações pendentes</option><option value="blocked">Bloqueados por inatividade</option><option value="active">Acesso liberado</option></select><button onClick={load} disabled={!!busy} className="px-4 py-2 rounded-xl border whitespace-nowrap">Atualizar</button></div>
+            <p className="text-xs opacity-60">Atualização automática a cada 30 segundos. {visible.length} aluno(s) exibido(s).</p>
+            <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead><tr className="border-b"><th className="p-3">Aluno</th><th className="p-3">Último acesso / tempo ausente</th><th className="p-3">Prazo</th><th className="p-3">Situação</th><th className="p-3">Solicitação</th></tr></thead><tbody>
+                {visible.map(row=><tr key={row.uid} className="border-b align-top"><td className="p-3"><p className="font-bold">{row.name}</p><p className="opacity-70 break-all">{row.email}</p></td><td className="p-3"><p>{row.lastAccessAt?inactivityDate(row.lastAccessAt):'Ainda sem acesso registrado'}</p><p className="font-semibold mt-1">{inactivityDuration(row.lastAccessAt?now-row.lastAccessAt:null)}</p>{!row.lastAccessAt&&<p className="text-xs opacity-60">Acompanhado desde {inactivityDate(row.trackedAt)}</p>}</td><td className="p-3"><p>{row.inactivityBlocked?inactivityDate(row.blockedDeadline||row.expiresAt):row.expiresAt?inactivityDate(row.expiresAt):'Regra desativada'}</p>{row.releasedAt&&<p className="text-xs opacity-60">Liberado em {inactivityDate(row.releasedAt)}</p>}</td><td className="p-3"><span className={row.inactivityBlocked?'text-red-500 font-bold':'text-emerald-600 font-bold'}>{row.inactivityBlocked?'Bloqueado por inatividade':'Sem bloqueio por inatividade'}</span>{row.manualBlocked&&<p className="text-amber-600 mt-1">Também há bloqueio manual</p>}</td><td className="p-3 min-w-[210px]">{row.request?<><p>{({pending:'Aguardando aprovação',approved:'Aprovada',rejected:'Recusada'})[row.request.status]}</p><p className="text-xs opacity-60">{inactivityDate(row.request.requestedAt)}</p>{row.request.message&&<p className="mt-2 whitespace-pre-wrap break-words max-w-xs">{row.request.message}</p>}{row.request.status==='pending'&&<div className="flex gap-2 mt-3"><button disabled={!!busy} onClick={()=>review(row,'approve')} className="bg-emerald-600 text-white px-3 py-2 rounded-lg disabled:opacity-50">Aprovar</button><button disabled={!!busy} onClick={()=>review(row,'reject')} className="border rounded-lg px-3 py-2 disabled:opacity-50">Recusar</button></div>}</>:<span className="opacity-50">Sem solicitação</span>}</td></tr>)}
+                {!visible.length&&<tr><td colSpan="5" className="text-center p-8 opacity-70">{loading?'Carregando usuários…':error?'Não foi possível carregar os usuários.':'Nenhum aluno neste filtro.'}</td></tr>}
+            </tbody></table></div>
+        </div>
+    </div>;
+}
+
 function App() {
     usePlatformDomains();
     const chatUploadPolicy = useConversationUploads();
@@ -15381,6 +15481,7 @@ const AVAILABLE_PERMISSIONS = [
     { id: 'acelerador', label: 'Acelerador de Vendas & IA' }, 
     { id: 'whatsapp', label: 'WhatsApp & IA' }, 
     { id: 'app_settings', label: 'Configurações de App' },
+    { id: 'inactivity', label: 'Acessos e Inatividade' },
     { id: 'equipe', label: 'Equipe' },
     { id: 'suporte', label: 'Chat Suporte' },
     { id: 'ajustes-gerais', label: 'Ajustes' },
@@ -21714,6 +21815,10 @@ case 'acelerador':
     
                        
                        
+                        case 'inactivity':
+                if (!hasPermission('inactivity')) return <p>Acesso restrito.</p>;
+                return <InactivityAdmin theme={theme} />;
+
                         case 'app_settings':
                 if (!hasPermission('app_settings')) return <div className="flex flex-col items-center justify-center h-full text-slate-500"><Icons.Shield className="w-16 h-16 mb-4" /><h3 className="text-xl font-bold">Acesso Restrito</h3></div>;
                 return <AdminAppSettingsTab db={db} theme={theme} Icons={Icons} showNotification={showNotification} uploadToCustomDrive={uploadToCustomDrive} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings} />;
@@ -24100,6 +24205,7 @@ case 'acelerador':
     <NavItem id="equipe" icon={Icons.Shield} label="Equipe" badge={0} />
     <NavItem id="ajustes-gerais" icon={Icons.Sliders} label="Ajustes Gerais" badge={0} />
     <NavItem id="app_settings" icon={Icons.Zap} label="Configurações de App" badge={0} />
+    <NavItem id="inactivity" icon={Icons.Clock} label="Acessos e Inatividade" badge={0} />
     
     <NavItem id="social" icon={Icons.Link} label="Social & IA" badge={0} />
 <NavItem id="acelerador" icon={Icons.TrendingUp} label="Acelerador de Vendas" badge={0} /> {/* 👈 ATUALIZADO AQUI */}
