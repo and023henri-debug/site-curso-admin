@@ -33,106 +33,13 @@ Nenhum provedor de videoconferência é incorporado nesta aba. Capacidade: 8 pes
 Fundos são processados localmente com MediaPipe; câmera externa depende do sistema operacional.
 Gravações baixadas localmente podem ser enviadas ao R2 pelo administrador.
 -->
-<!-- CORREÇÃO DE LOGIN E AFILIADOS — 16/10/2026
-REVISÃO DE LOGIN V4 — confirmação automática do e-mail com atualização do token;
-erros de autenticação separados de erros de autorização; nova consulta sem nova senha.
-VALIDAÇÃO LOCAL V4: 12 testes de componentes React com Firebase simulado e validação
-sintática dos dois HTMLs. Não é validação das credenciais ou regras em produção.
-Não houve login em contas reais, compra real nem alteração de regras de produção.
-O frontend não confirma pagamentos nem escreve saldos. /api/payments deve validar o token,
-ler affiliates/{ref}.active e a porcentagem do item no Firestore, salvar ref, affiliatePercent,
-affiliateCommission e attributionSource='affiliate_link', attributionVersion=3 no pedido.
-Gratuitos: registrar uma matrícula idempotente por aluno/item, free=true, valor=0 e comissão=0.
-Pagos: creditar uma única vez por pedido após confirmação autenticada do provedor, em transação
-atômica; estornar em reembolso/cancelamento. Nunca aceitar preço, porcentagem ou status do navegador.
-Regras: cada conta lê o próprio cadastro por uid; afiliados leem somente vendas com ref do próprio
-cadastro. Impedir escrita cliente em saldo, comissões, uid, permissões e status financeiro.
-Cadastros antigos sem UID precisam de vínculo administrativo com a conta real no Authentication.
-O backend e as regras não fazem parte destes HTMLs e precisam ser verificados separadamente.
--->
 <html lang="pt-BR"> 
 
 <head>
   <meta name="referrer" content="strict-origin-when-cross-origin">
-<!-- =====================================================================
- BLOCO DE BLOQUEIO VISUAL — INÍCIO — EDITÁVEL / REMOVÍVEL
- Localização: início do <head>. Para desativar: enabled: false.
- ATENÇÃO: isto NÃO oculta HTML/chaves, NÃO bloqueia requisições externas
- e limpar o console NÃO impede injeção de scripts. Proteções reais no servidor.
- A impressão ficará oculta, inclusive documentos/certificados desta página.
-====================================================================== -->
-<script>
-window.PLATFORM_VISUAL_LOCK = { enabled: true, clearConsole: true };
-window.addEventListener('DOMContentLoaded', () => {
-    if (!window.PLATFORM_VISUAL_LOCK.enabled) return;
-    document.addEventListener('contextmenu', e => {
-        if (window.PLATFORM_VISUAL_LOCK.enabled) e.preventDefault();
-    });
-    document.addEventListener('keydown', e => {
-        if (!window.PLATFORM_VISUAL_LOCK.enabled) return;
-        const key = String(e.key || '').toLowerCase();
-        if (key === 'f12' || e.keyCode === 123 ||
-            (e.ctrlKey && e.shiftKey && ['i','j','c'].includes(key)) ||
-            (e.ctrlKey && ['u','s'].includes(key)) ||
-            (e.metaKey && e.altKey && ['i','j','u'].includes(key))) e.preventDefault();
-    });
-    let previousDisplay = '';
-    window.addEventListener('beforeprint', () => {
-        if (!window.PLATFORM_VISUAL_LOCK.enabled) return;
-        previousDisplay = document.body.style.display;
-        document.body.style.display = 'none';
-    });
-    window.addEventListener('afterprint', () => { document.body.style.display = previousDisplay; });
-    setInterval(() => {
-        if (!window.PLATFORM_VISUAL_LOCK.enabled || !window.PLATFORM_VISUAL_LOCK.clearConsole) return;
-        console.clear();
-        console.log('%c⛔ ACESSO RESTRITO', 'color:red;font-size:24px;font-weight:bold;text-shadow:1px 1px 0px black;');
-    }, 1000);
-});
-</script>
-<!-- BLOCO DE BLOQUEIO VISUAL — FIM -->
 
-<!-- LIMITADOR LOCAL DE ACESSO — INÍCIO
- 5 tentativas por 15 minutos por navegador/origem e operação.
- Não armazena senha/email. Não substitui limites do Firebase/servidor.
- Pode ser contornado limpando armazenamento, mudando navegador ou acessando API.
--->
-<script>
-(() => {
-    const LIMIT = 5, WINDOW = 15 * 60 * 1000;
-    const memory = {}, pending = new Set();
-    const read = key => { try { return JSON.parse(localStorage.getItem(key)) || memory[key]; } catch (_) { return memory[key]; } };
-    const write = (key, value) => { memory[key] = value; try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {} };
-    const blocked = until => {
-        const error = new Error(`Limite de tentativas atingido neste navegador. Aguarde ${Math.max(1, Math.ceil((until - Date.now()) / 60000))} minuto(s) e tente novamente.`);
-        error.code = 'platform/too-many-attempts'; return error;
-    };
-    window.platformAuthAttempt = async (kind, action) => {
-        const key = 'platform-auth-attempts-v1:' + kind;
-        if (pending.has(key)) { const error = new Error('Uma tentativa já está em andamento. Aguarde.'); error.code = 'platform/auth-pending'; throw error; }
-        pending.add(key);
-        const run = async () => {
-            const now = Date.now(); let state = read(key);
-            if (!state || !Number.isFinite(state.until) || state.until <= now) state = { count: 0, until: now + WINDOW };
-            if (state.count >= LIMIT) throw blocked(state.until);
-            state = { ...state, count: state.count + 1 }; write(key, state);
-            try {
-                const result = await action();
-                if (kind === 'password') write(key, {count:0, until:0});
-                return result;
-            } catch (error) {
-                if (error.code === 'auth/too-many-requests') write(key, {count:LIMIT, until:Date.now() + WINDOW});
-                if (error.code === 'auth/network-request-failed' || error.code === 'auth/popup-closed-by-user') write(key, {...state, count:Math.max(0, state.count - 1)});
-                if (read(key)?.count >= LIMIT) throw blocked(read(key).until);
-                throw error;
-            }
-        };
-        try { return navigator.locks?.request ? await navigator.locks.request(key, { mode:'exclusive' }, run) : await run(); }
-        finally { pending.delete(key); }
-    };
-})();
-</script>
-<!-- LIMITADOR LOCAL DE ACESSO — FIM -->
+
+<!-- Login direto por e-mail e senha, sem limitador local de tentativas. -->
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -3231,8 +3138,8 @@ import { writeBatch as programmerWriteBatch } from 'firebase/firestore';
 import { runTransaction as meetTransaction, limit as meetLimit } from 'firebase/firestore';
 import { runTransaction as inactivityTransaction, query as inactivityQuery, orderBy as inactivityOrderBy, documentId as inactivityDocumentId, limit as inactivityLimit, startAfter as inactivityStartAfter } from 'firebase/firestore';
         import { 
-            initializeAuth, browserLocalPersistence, browserSessionPersistence, inMemoryPersistence, getAuth,
-            signInWithEmailAndPassword, signOut as platformFirebaseSignOut, sendEmailVerification, reload, getIdTokenResult, onAuthStateChanged, 
+            initializeAuth, browserLocalPersistence, getAuth,
+            signInWithEmailAndPassword, signOut as platformFirebaseSignOut, onAuthStateChanged, 
             createUserWithEmailAndPassword, sendPasswordResetEmail, onIdTokenChanged
          } from 'firebase/auth';
         import { 
@@ -3474,7 +3381,7 @@ window.platformAIEndpoint=platformAIEndpoint;
             
             // 👇 CORREÇÃO: Força a usar LocalStorage desde a raiz para não travar no celular
             auth = initializeAuth(app, {
-                persistence: [browserLocalPersistence, browserSessionPersistence, inMemoryPersistence]
+                persistence: browserLocalPersistence
             });
             
             // LÓGICA DE FILTRO POR URL NO ADMIN
@@ -3929,7 +3836,12 @@ const PlatformDomainSettings = ({ showNotification }) => {
     </section>;
 };
 
-const guardedPasswordSignIn = (instance, email, password) => window.platformAuthAttempt('password', () => signInWithEmailAndPassword(instance, String(email || '').trim(), password));
+const adminPasswordSignIn = (instance, email, password) => {
+    if (!instance) return Promise.reject(new Error('Não foi possível conectar ao serviço de login. Recarregue a página e tente novamente.'));
+    const normalizedEmail = String(email || '').trim();
+    if (!normalizedEmail || !password) return Promise.reject(new Error('Preencha o e-mail e a senha.'));
+    return signInWithEmailAndPassword(instance, normalizedEmail, password);
+};
 
 const platformVideoId = value => {
     try {
@@ -4748,13 +4660,10 @@ function StudentLiveSessions({config,user,purchasedIds=[],groups=[]}){
 }
 
 
-const affiliateApproved = sale => ['pago','aprovado','approved','concluido','concluído','liberado','free','gratuito'].includes(String(sale.status||'').toLowerCase());
-const affiliateSaleValue = sale => { const raw=sale.valor ?? sale.price ?? sale.amount ?? 0; const n=typeof raw==='number'?raw:Number(String(raw).replace(/[^\d,.-]/g,'').replace(/\.(?=.*[,])/g,'').replace(',','.'));return Number.isFinite(n)?Math.max(0,n):0; };
-const affiliateFreeSale = sale => sale.free === true || sale.requireFree === true || ['free','gratuito'].includes(String(sale.status||'').toLowerCase()) || affiliateSaleValue(sale) === 0;
 const savedAffiliateCommission = sale => {
-    if (!affiliateApproved(sale) || affiliateFreeSale(sale) || !sale.ref || sale.manualAttribution || (sale.attributionVersion >= 2 && sale.attributionSource !== 'affiliate_link')) return 0;
+    if (!sale.ref || sale.manualAttribution || (sale.attributionVersion === 2 && sale.attributionSource !== 'affiliate_link')) return 0;
     const amount = Number(sale.affiliateCommission);
-    return Number.isFinite(amount) && amount >= 0 ? Math.round(amount*100)/100 : 0;
+    return Number.isFinite(amount) && amount >= 0 ? amount : 0;
 };
 const buildPlatformAffiliateLink = (base, itemId, kind, ref) => {
     const url = new URL(base || getPlatformStudentUrl());
@@ -10768,7 +10677,7 @@ const AdminEmailDispatchTab = ({ db, theme, Icons, showNotification, requestConf
             // Dashboard em tempo real para a IA de Marketing
             const totalAlunos = (alunos || []).length;
             const aprovados = (pagamentos || []).filter(v => ['pago', 'aprovado', 'concluído', 'approved'].includes(String(v.status).toLowerCase()));
-            const faturamento = aprovados.reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+            const faturamento = aprovados.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
             
             const cursosComDescricao = (cursos || []).map(c => `ID: ${c.id} | NOME: ${c.title}\nDESCRIÇÃO: ${c.description || c.checkoutDescription}\nPREÇO: R$ ${c.price}\n---`).join('\n');
             const produtosLoja = (vendasLoja || []).map(v => `PRODUTO LOJA: ${v.productTitle}`).join(', ');
@@ -11930,7 +11839,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                 if (item) {
                     const aprovados = (pagamentos || []).filter(v => ['pago', 'aprovado', 'concluído', 'approved'].includes(String(v.status).toLowerCase()));
                     const itemSales = aprovados.filter(p => p.courseId === iaContextItem);
-                    const itemRevenue = itemSales.reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+                    const itemRevenue = itemSales.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
                     const studentCount = itemSales.length;
                     
                     const rankingMap = {};
@@ -11957,13 +11866,13 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                     - Crescimento: O curso está com tração de ${studentCount > 10 ? 'Alta Escala' : 'Lançamento/Semente'}.
                     `;
 
-                    linksContexto = `[LINK DIRETO]: ${buildPlatformAffiliateLink(getPlatformStudentUrl(),item.id,'course',activeAffId)}`;
+                    linksContexto = `[LINK DIRETO]: ${getPlatformStudentUrl()}/?id=${item.id}&ref=${activeAffId}`;
                 }
             } else if (iaContextType === 'produto' && iaContextItem) {
                 const item = products.find(p => p.id === iaContextItem);
                 if (item) {
                     const itemSales = (vendasLoja || []).filter(v => v.productId === iaContextItem && ['pago', 'aprovado', 'concluído', 'approved'].includes(String(v.status).toLowerCase()));
-                    const itemRevenue = itemSales.reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+                    const itemRevenue = itemSales.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
                     const studentCount = itemSales.length;
                     
                     contextoPrioritario = `FOCO EM MARKETPLACE: Analise o desempenho deste produto da loja.`;
@@ -11978,7 +11887,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                     - Total Vendido: ${studentCount} unidades.
                     - Receita Gerada: R$ ${itemRevenue.toFixed(2)}
                     `;
-                    linksContexto = `[LINK DE LOJA]: ${buildPlatformAffiliateLink(getPlatformStudentUrl(),item.id,'product',activeAffId)}`;
+                    linksContexto = `[LINK DE LOJA]: ${getPlatformStudentUrl()}/?product=${item.id}&ref=${activeAffId}`;
                 }
             } else {
                 dossieContexto = (cursos || []).slice(0, 10).map(c => `CURSO: ${c.title}`).join(', ');
@@ -12055,15 +11964,15 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
     const stats = useMemo(() => {
         const todasVendas = [...(pagamentos || []), ...(vendasLoja || [])];
         const vRef = todasVendas.filter(v => v.ref && !v.manualAttribution && (v.attributionVersion !== 2 || v.attributionSource === 'affiliate_link') && (currentUser?.role !== 'affiliate' || v.ref === activeAffId));
-        const aprovadas = vRef.filter(affiliateApproved);
+        const aprovadas = vRef.filter(v => ['pago', 'aprovado', 'concluído', 'approved'].includes(String(v.status).toLowerCase()));
         
-        const totalVolume = aprovadas.reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+        const totalVolume = aprovadas.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
         
         const chartData = {};
         aprovadas.forEach(v => {
             const date = v.createdAt?.seconds ? new Date(v.createdAt.seconds * 1000) : new Date();
             const label = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-            chartData[label] = (chartData[label] || 0) + affiliateSaleValue(v);
+            chartData[label] = (chartData[label] || 0) + (parseFloat(v.valor || v.price) || 0);
         });
 
         const last7Days = [];
@@ -12079,7 +11988,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
         const detailedSales = aprovadas.map(v => {
             const course = cursos.find(c => c.id === v.courseId);
             const commPercent = course?.affiliatePercent || 0;
-            const itemPrice = affiliateSaleValue(v);
+            const itemPrice = parseFloat(v.valor || v.price || 0);
             const calculatedComm = itemPrice * (commPercent / 100);
             
             return {
@@ -12100,8 +12009,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
         return {
             totalVolume,
             totalCommission: Math.round(aprovadas.reduce((total, sale) => total + savedAffiliateCommission(sale), 0) * 100) / 100,
-            count: aprovadas.filter(v=>!affiliateFreeSale(v)).length,
-            freeCount: aprovadas.filter(affiliateFreeSale).length,
+            count: aprovadas.length,
             chart: finalChart,
             topProds,
             recent: aprovadas.slice(0, 5),
@@ -12119,7 +12027,7 @@ const AdminProductsLinksTab = ({ db, theme, Icons, showNotification, cursos, aff
                     <p className={`text-sm ${theme.textSec} mt-1`}>
                         Acompanhe em tempo real o volume de vendas e a conversão dos seus links.
                     </p>
-                    <p className="mt-2 text-sm text-blue-400">Indicações gratuitas concluídas: {stats.freeCount} · Vendas pagas: {stats.count}</p><p className="mt-2 font-bold text-emerald-500">Comissões registradas em vendas aprovadas: {stats.totalCommission.toLocaleString('pt-BR', {style:'currency',currency:'BRL'})}</p><p className="text-xs text-slate-500">Total de comissões registradas; não representa transferência bancária nem saldo disponível para saque.</p>
+                    <p className="mt-2 font-bold text-emerald-500">Comissões registradas em vendas aprovadas: {stats.totalCommission.toLocaleString('pt-BR', {style:'currency',currency:'BRL'})}</p><p className="text-xs text-slate-500">Total de comissões registradas; não representa transferência bancária nem saldo disponível para saque.</p>
                 </div>
                 
                 <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
@@ -13374,9 +13282,7 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
     const handleSaveComm = async (cid, val, type = 'course') => {
         try { 
             const collectionName = type === 'course' ? "courses" : "marketplace_products";
-            const percent = Number(String(val).replace(',', '.'));
-            if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw Error('Informe uma porcentagem entre 0 e 100.');
-            await updateDoc(doc(db, collectionName, cid), { affiliatePercent: percent }); 
+            await updateDoc(doc(db, collectionName, cid), { affiliatePercent: Number(val) }); 
             showNotification(`Comissão do ${type === 'course' ? 'curso' : 'produto'} atualizada!`, "success"); 
         } catch(e) { showNotification("Erro ao salvar", "error"); }
     };
@@ -13399,7 +13305,6 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
             const newUserCred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
             const uid = newUserCred.user.uid;
             await signOut(secondaryAuth);
-            await programmerDeleteApp(secondaryApp);
 
             // 2. Salvar na coleção de afiliados com permissão restrita por padrão
             await addDoc(collection(db, "affiliates"), {
@@ -13719,11 +13624,6 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
                                             className={`w-full px-4 py-3 rounded-xl border text-sm font-bold ${theme.input}`} 
                                         />
                                     </div>
-                                    <label className="block text-xs font-bold">UID do login (Firebase Authentication)
-                                        <input value={editingAff.uid || ''} onChange={e=>setEditingAff({...editingAff,uid:e.target.value.trim()})} className={`w-full mt-2 px-4 py-3 rounded-xl border ${theme.input}`} />
-                                        <span className="block mt-2 font-normal text-slate-400">Para corrigir um cadastro antigo, copie o UID da conta deste mesmo e-mail no Authentication. Não use o ID do documento.</span>
-                                    </label>
-                                    <button type="button" className="text-indigo-400 underline text-sm" onClick={async()=>{try{await sendPasswordResetEmail(auth,editingAff.email.trim());showNotification('E-mail de redefinição solicitado.','success');}catch(error){showNotification(error.message,'error');}}}>Enviar redefinição de senha</button>
                                     <div className="p-4 bg-indigo-50 dark:bg-indigo-900/10 rounded-xl border border-indigo-100 dark:border-indigo-800/50">
                                         <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-1">E-mail (Login)</p>
                                         <p className="text-sm font-bold text-slate-600 dark:text-slate-300">{editingAff.email}</p>
@@ -13735,13 +13635,9 @@ const AdminAffiliatesTab = ({ db, theme, Icons, showNotification, requestConfirm
                                     <button 
                                         onClick={async () => {
                                             if(!editingAff.name.trim()) return;
-                                            if(!/^[A-Za-z0-9_-]{1,128}$/.test(editingAff.uid||''))return showNotification('Informe o UID válido da conta no Authentication.','error');
-                                            try {
-                                                const matches=await getDocs(query(collection(db,'affiliates'),where('uid','==',editingAff.uid)));
-                                                if(matches.docs.some(row=>row.id!==editingAff.id))throw Error('Este UID já está vinculado a outro afiliado.');
-                                                await updateDoc(doc(db, 'affiliates', editingAff.id), {name:editingAff.name.trim(),uid:editingAff.uid});
-                                                showNotification('Dados do parceiro atualizados!','success');setEditingAff(null);
-                                            } catch(error){showNotification(error.message,'error');}
+                                            await updateDoc(doc(db, "affiliates", editingAff.id), { name: editingAff.name.trim() });
+                                            showNotification("Dados do parceiro atualizados!", "success");
+                                            setEditingAff(null);
                                         }}
                                         className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg transition-all"
                                     >
@@ -16775,14 +16671,14 @@ function audienceValidate(value) {
     if (rule.userIds.length > 500 || rule.excludedUserIds.length > 500) throw Error('Use até 500 alunos por seleção.');
     return rule;
 }
-function useAudienceGroups(enabled = true) {
+function useAudienceGroups() {
     const [state, setState] = React.useState({groups:[], loaded:false, error:''});
     const userId = auth?.currentUser?.uid || '';
     React.useEffect(() => {
-        if (!enabled || !db || !userId) { setState({groups:[],loaded:false,error:''}); return; }
+        if (!db || !userId) { setState({groups:[],loaded:false,error:''}); return; }
         return onSnapshot(doc(db,'config','audience_groups'), s => setState({groups:Array.isArray(s.data()?.groups) ? s.data().groups : [], loaded:true, error:''}),
             () => setState({groups:[], loaded:true, error:'Não foi possível carregar os grupos de público.'}));
-    }, [userId, enabled]);
+    }, [userId]);
     return state;
 }
 const tabShuffle = items => { const result = [...items]; for (let i=result.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [result[i],result[j]]=[result[j],result[i]]; } return result; };
@@ -17445,8 +17341,6 @@ const [dashboardModalStudent, setDashboardModalStudent] = useState(null);
             const [password, setPassword] = useState('');
 
             const [loginError, setLoginError] = useState('');
-            const [accessRetry,setAccessRetry]=useState(0);
-            const [checkingAccess,setCheckingAccess]=useState(false);
 
             const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -17512,7 +17406,7 @@ const [dashboardModalStudent, setDashboardModalStudent] = useState(null);
             // --- ESTADOS DE DADOS ---
 
             const [alunos, setAlunos] = useState([]);
- const adminAudienceState=useAudienceGroups(isAuthenticated && userRole !== 'affiliate');
+ const adminAudienceState=useAudienceGroups();
             const [pagamentos, setPagamentos] = useState([]);
             const [affiliates, setAffiliates] = useState([]);
             
@@ -18066,71 +17960,94 @@ const AVAILABLE_PERMISSIONS = [
 
 
 
-            // Authentication v4: cancellation prevents an old session from rejecting a new login.
+            // --- BLOCO 1: AUTENTICAÇÃO MESTRA (FINAL E SEGURA) ---
             useEffect(() => {
-                let alive = true, generation = 0, stopProfile = () => {};
-                if (window.initialSearchFilter) { setFilterNome(window.initialSearchFilter); setSearchTerm(window.initialSearchFilter); }
-                const stopAuth = onAuthStateChanged(auth, async user => {
-                    const ticket = ++generation;
-                    stopProfile(); stopProfile = () => {};
-                    const current = () => alive && generation === ticket && auth.currentUser?.uid === user?.uid;
-                    setIsAuthenticated(false); setCurrentUserData(null); setUserRole(null); setCheckingAccess(!!user); setLoginError('');
-                    if (!user) { setIsLoggingIn(false); return; }
-                    const reject = message => { if(current()){setIsAuthenticated(false);setCurrentUserData(null);setUserRole(null);setIsLoggingIn(false);setCheckingAccess(false);setLoginError(message);} };
-                    const accept = (data, id, affiliate) => {
-                        if (!current()) return;
-                        if (data.active === false || data.disabled === true) return reject('Esta conta está desativada. Solicite a reativação ao administrador.');
-                        const role = affiliate ? 'affiliate' : (data.role || 'colaborador');
-                        setCurrentUserData({...data, id, uid:user.uid, role, ...(affiliate ? {permissions:['produtos_links']} : {})});
-                        setUserRole(role); setActiveTab(affiliate ? 'produtos_links' : 'overview');
-                        setLoginError('');setIsLoggingIn(false);setCheckingAccess(false);setIsAuthenticated(true);
-                    };
-                    if (user.uid === programmerMasterUid) { accept({nome:'Milton Gobbo (Admin)',email:user.email,role:'admin',permissions:'all',photoURL:user.photoURL},user.uid,false);return; }
-                    try {
-                        const results = await Promise.allSettled(['team','affiliates'].map(name => meetTimed(getDocs(query(collection(db,name),where('uid','==',user.uid))),15000,'A consulta do cadastro demorou. Confira a conexão e tente novamente.')));
-                        if (!current()) return;
-                        const teamDocs = results[0].status==='fulfilled' ? results[0].value.docs : [];
-                        const affDocs = results[1].status==='fulfilled' ? results[1].value.docs : [];
-                        const staff = teamDocs.find(d => !['affiliate','affiliates'].includes(d.data().role));
-                        const row = staff || affDocs[0];
-                        if (!row) {
-                            const denied = results.some(r=>r.status==='rejected');
-                            reject(teamDocs.length ? 'Afiliado cadastrado apenas na equipe. O administrador precisa cadastrar/vincular esta conta em Afiliados com o mesmo UID.' : denied ? 'Login reconhecido, mas o Firebase não permitiu consultar seu cadastro. Revise as regras de leitura do próprio UID em team e affiliates.' : 'Login reconhecido, mas não há cadastro de acesso vinculado ao seu UID. Solicite a conferência ao administrador.');
-                            return;
+                // Aplica filtro de URL caso exista
+                if (window.initialSearchFilter) {
+                    setFilterNome(window.initialSearchFilter);
+                    setSearchTerm(window.initialSearchFilter);
+                }
+
+                const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+                    // SEU ID MESTRE REAL
+                    const MASTER_ID = "XSVAXUUaUogC9F5hl5VKxPUfx343";
+
+                    if (user) {
+                        // 1. REGRA SUPREMA: Verifica se o ID bate com o Mestre
+                        if (user.uid === MASTER_ID) {
+                            console.log("🔒 Mestre Admin autenticado via ID. Acesso Total.");
+                            setIsAuthenticated(true);
+                            setUserRole('admin');
+                            setCurrentUserData({
+                                nome: 'Milton Gobbo (Admin)', 
+                                email: user.email,
+                                role: 'admin',
+                                permissions: 'all', 
+                                uid: user.uid,
+                                photoURL: user.photoURL
+                            });
+                            setIsLoggingIn(false); // 👇 DESTRAVA O BOTÃO
+                            return; 
                         }
-                        const affiliate = !staff;
-                        accept(row.data(),row.id,affiliate);
-                        stopProfile = onSnapshot(doc(db,affiliate?'affiliates':'team',row.id),snapshot=>{
-                            if(!current())return;
-                            if(!snapshot.exists() || snapshot.data().uid!==user.uid) return reject('Seu acesso foi removido. Fale com o administrador.');
-                            const data=snapshot.data();
-                            if(data.active===false||data.disabled===true)return reject('Esta conta está desativada. Fale com o administrador.');
-                            if(!affiliate && ['affiliate','affiliates'].includes(data.role))return reject('Seu perfil mudou. Entre novamente após o administrador vincular o cadastro em Afiliados.');
-                            setUserRole(affiliate?'affiliate':data.role||'colaborador');
-                            setCurrentUserData({...data,id:snapshot.id,uid:user.uid,role:affiliate?'affiliate':data.role||'colaborador',...(affiliate?{permissions:['produtos_links']}:{})});
-                        },()=>reject('Não foi possível confirmar as permissões desta conta. Confira a conexão e as regras do Firebase.'));
-                    } catch(error) { reject('Não foi possível consultar seu acesso: '+error.message); }
+
+                        // 2. Para Equipe (Staff que NÃO é você), verifica permissão no Banco
+                        try {
+                            // Tenta primeiro na equipe de administração
+                            const qTeam = query(collection(db, "team"), where("uid", "==", user.uid));
+                            const snapTeam = await getDocs(qTeam);
+                            
+                            if (!snapTeam.empty) {
+                                const userData = snapTeam.docs[0].data();
+                                setIsAuthenticated(true);
+                                setUserRole(userData.role);
+                                setCurrentUserData(userData);
+                                setIsLoggingIn(false);
+                                return;
+                            }
+
+                            // Se não for admin/equipe, verifica se é um Afiliado Registado
+                const qAff = query(collection(db, "affiliates"), where("uid", "==", user.uid));
+                const unsubAff = onSnapshot(qAff, (snap) => {
+                    if (!snap.empty) {
+                        const affData = snap.docs[0].data();
+                        setIsAuthenticated(true);
+                        setUserRole('affiliate');
+                        setCurrentUserData({ ...affData, id: snap.docs[0].id, role: 'affiliate' });
+                        if (activeTab === 'dashboard' || activeTab === 'overview') setActiveTab('produtos_links'); 
+                        setIsLoggingIn(false);
+                    }
                 });
-                return () => {alive=false;++generation;stopProfile();stopAuth();};
-            }, [accessRetry]);
+                if (user.uid !== MASTER_ID) return () => unsubAff();
+
+                            // Usuário logado, mas NÃO é o Mestre e NÃO está na equipe nem nos afiliados
+                            console.warn("ALERTA: Tentativa de acesso não autorizado. ID:", user.uid);
+                            await signOut(auth); 
+                            setIsAuthenticated(false);
+                            setUserRole(null);
+                            setIsLoggingIn(false);
+                            setLoginError("Acesso Negado: Conta não autorizada para o painel.");
+                        } catch (error) {
+                            console.error("Erro ao verificar permissões:", error);
+                            await signOut(auth);
+                            setIsAuthenticated(false);
+                            setIsLoggingIn(false); // 👇 DESTRAVA O BOTÃO
+                            setLoginError("Erro ao verificar banco de dados no celular.");
+                        }
+                    } else {
+                        // Ninguém logado
+                        setIsAuthenticated(false);
+                        setUserRole(null);
+                        setCurrentUserData(null);
+                        setIsLoggingIn(false); // 👇 DESTRAVA O BOTÃO
+                    }
+                });
+                return () => unsubscribeAuth();
+            }, []);
+
+
 
             useEffect(() => {
                 if (!isAuthenticated) return;
-                if (userRole === 'affiliate') {
-                    const id=currentUserData?.id;
-                    if(!id)return;
-                    setAlunos([]);setTeam([]);setAuditLogs([]);setSupportChats([]);setCertificados([]);setCancellationRequests([]);setPopups([]);
-                    setPagamentos([]);setVendasLoja([]);setAffiliates([currentUserData]);
-                    const failed=error=>showNotification('Não foi possível carregar os registros do afiliado: '+error.message,'error');
-                    const stops=[
-                        onSnapshot(collection(db,'courses'),snap=>setCursos(snap.docs.map(d=>({...d.data(),id:d.id}))),failed),
-                        onSnapshot(doc(db,'affiliates',id),snap=>setAffiliates(snap.exists()?[{...snap.data(),id:snap.id}]:[]),failed),
-                        onSnapshot(query(collection(db,'transactions'),where('ref','==',id)),snap=>setPagamentos(snap.docs.map(d=>({...d.data(),id:d.id}))),failed),
-                        onSnapshot(query(collection(db,'marketplace_orders'),where('ref','==',id)),snap=>setVendasLoja(snap.docs.map(d=>({...d.data(),id:d.id}))),failed),
-                        onSnapshot(doc(db,'config','general_settings'),snap=>{if(snap.exists()){const data=platformCleanSettings(programmerPublicOnly(snap.data()));window.platformPublicSettings=data;setGeneralSettings(prev=>({...prev,...data}));}},failed)
-                    ];
-                    return ()=>stops.forEach(stop=>stop());
-                }
 
                 const unsubAlunos = onSnapshot(collection(db, "users"), (snap) => setAlunos(snap.docs.map(d => ({...d.data(), id: d.id, uid: d.id})).filter(u => u.role !== 'admin')));
                 const unsubCursos = onSnapshot(collection(db, "courses"), (snap) => setCursos(snap.docs.map(d => ({id: d.id, ...d.data()}))));
@@ -18211,7 +18128,7 @@ const AVAILABLE_PERMISSIONS = [
                 return () => {
                     unsubAlunos(); unsubCursos(); unsubPagamentos(); unsubVendasLoja(); unsubPopups(); unsubTeam(); unsubLogs(); unsubGeneral(); unsubChats(); unsubCertificados(); unsubAffiliates(); unsubCancellations();
                 };
-            }, [isAuthenticated, userRole, currentUserData?.id]);
+            }, [isAuthenticated]);
 
             // NOVO: Motor inteligente que constrói o GRÁFICO somando Cursos e Marketplace!
             useEffect(() => {
@@ -18652,9 +18569,9 @@ const AVAILABLE_PERMISSIONS = [
                     // Limpa os espaços invisíveis do email
                     const emailLimpo = email.trim().toLowerCase(); 
                     
-                    // A confirmação do e-mail é conferida antes de abrir o painel.
+                    // Autentica diretamente com e-mail e senha no Firebase.
 
-                    await guardedPasswordSignIn(auth, emailLimpo, password);
+                    await adminPasswordSignIn(auth, emailLimpo, password);
                     
                     // Se o login deu certo, damos 3 segundos e destravamos o botão 
                     // para caso a tela demore a fazer a transição visual
@@ -18671,9 +18588,15 @@ const AVAILABLE_PERMISSIONS = [
                     if (error.message === "TIMEOUT") {
                         setLoginError('O login demorou muito para responder. Verifique sua conexão de internet no celular.');
                     } else if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-                        setLoginError('O Firebase não aceitou o e-mail e a senha neste projeto. Confira o e-mail ou use Redefinir senha. Confirmar o e-mail não altera sua senha.');
+                        setLoginError('Acesso negado: E-mail ou senha incorretos.');
+                    } else if (error.code === 'auth/multi-factor-auth-required') {
+                        setLoginError('O Firebase exige verificação em duas etapas para esta conta. Para usar apenas e-mail e senha, remova os fatores cadastrados na conta pelo gerenciamento do Firebase Authentication.');
+                    } else if (error.code === 'auth/too-many-requests') {
+                        setLoginError('O Firebase limitou temporariamente as tentativas desta conta. Tente novamente mais tarde ou redefina sua senha. A página não aplica bloqueio local.');
+                    } else if (error.code === 'auth/user-disabled') {
+                        setLoginError('Esta conta está desativada no Firebase Authentication. Reative a conta no gerenciamento do projeto para entrar.');
                     } else if (error.code === 'auth/network-request-failed') {
-                        setLoginError('Erro de rede. Verifique se o celular está bloqueando o acesso à internet deste arquivo.');
+                        setLoginError('Erro de rede. Verifique sua conexão com a internet e tente novamente.');
                     } else {
                         setLoginError('Falha ao logar: ' + error.message);
                     }
@@ -18699,8 +18622,7 @@ const AVAILABLE_PERMISSIONS = [
 
                 try {
 
-                    auth.languageCode='pt-BR';
-                    await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+                    await sendPasswordResetEmail(auth, email);
 
                     setResetEmailSent(true); // <--- AQUI: Ativa a tela de sucesso interna
 
@@ -18726,9 +18648,12 @@ const AVAILABLE_PERMISSIONS = [
 
             
 
-            const handleLogout = async () => {
-                try { await signOut(auth); setIsAuthenticated(false); setCurrentUserData(null); setUserRole(null); setPassword(''); setActiveTab('overview'); }
-                catch(error){showNotification('Não foi possível sair: '+error.message,'error');}
+            const handleLogout = () => {
+
+                signOut(auth);
+
+                setIsAuthenticated(false);
+
             };
 
 
@@ -19630,7 +19555,7 @@ const handleSendPasswordReset = (email) => {
 
                             // TRUQUE: Inicializa uma app secundária para não deslogar o Admin atual
 
-                            const secondaryApp = initializeApp(firebaseConfig, "SecondaryApp_" + crypto.randomUUID());
+                            const secondaryApp = initializeApp(firebaseConfig, "SecondaryApp");
 
                             const secondaryAuth = getAuth(secondaryApp);
 
@@ -19653,7 +19578,6 @@ const handleSendPasswordReset = (email) => {
                             // Desloga da instância secundária para não conflitar
 
                             await signOut(secondaryAuth);
-            await programmerDeleteApp(secondaryApp);
 
                             
 
@@ -19697,7 +19621,7 @@ const handleSendPasswordReset = (email) => {
                 updatedAt: serverTimestamp()
             };
 
-            const collectionName = finalRole === "affiliate" ? "affiliates" : "team";
+            const collectionName = "team";
                     
                     // Adiciona campos de performance caso seja um novo afiliado
                     if (collectionName === "affiliates" && !editingMember.id) {
@@ -19709,13 +19633,7 @@ const handleSendPasswordReset = (email) => {
 
                     if (editingMember.id) {
                         // EDIÇÃO
-                        if(!/^[A-Za-z0-9_-]{1,128}$/.test(memberData.uid||''))throw Error('Confira o UID do login deste membro no Authentication.');
-                        if(collectionName==='affiliates') {
-                            const existing=await getDocs(query(collection(db,'affiliates'),where('uid','==',memberData.uid)));
-                            if(existing.docs.length>1)throw Error('Existem cadastros duplicados para este UID. Revise os afiliados.');
-                            const target=existing.docs[0]?.id||editingMember.id;
-                            await setDoc(doc(db,'affiliates',target),{...memberData,name:memberData.nome},{merge:true});
-                        } else await updateDoc(doc(db, collectionName, editingMember.id), memberData);
+                        await updateDoc(doc(db, collectionName, editingMember.id), memberData);
                         logSystemAction("Edição", `Editou ${collectionName}: ${editingMember.email}`);
                         showNotification("Dados atualizados.", "success");
                     } else {
@@ -19739,7 +19657,7 @@ const handleSendPasswordReset = (email) => {
 
                     console.error(e);
 
-                    showNotification("Erro ao salvar no banco de dados: " + e.message, "error");
+                    showNotification("Erro ao salvar no banco de dados.", "error");
 
                 }
 
@@ -19770,11 +19688,10 @@ const handleSendPasswordReset = (email) => {
 
             // Mantém a varredura automática a cada 30 segundos
             useEffect(() => {
-                if (!isAuthenticated || userRole !== 'admin') return;
-                calculateR2Usage();
+                calculateR2Usage(); 
                 const interval = setInterval(() => calculateR2Usage(), 30000); 
                 return () => clearInterval(interval);
-            }, [generalSettings.r2BucketName, isAuthenticated, userRole]); // Recalcula na hora se você mudar o nome do bucket na tela
+            }, [generalSettings.r2BucketName]); // Recalcula na hora se você mudar o nome do bucket na tela
 
             
 
@@ -20829,7 +20746,6 @@ const handleSendPasswordReset = (email) => {
            // --- BLOCO 2: PERMISSÃO (CORRIGIDO) ---
 
             const hasPermission = (tabId) => {
-                if (userRole === 'affiliate' || ['affiliate','affiliates'].includes(currentUserData?.role)) return tabId === 'produtos_links';
                 if (tabId === 'programmer') return auth.currentUser?.uid === programmerMasterUid;
                 if (tabId === 'ajuda') return !!auth.currentUser;
                 if (!currentUserData) return false;
@@ -21274,8 +21190,8 @@ const handleSendPasswordReset = (email) => {
             // Coleta as estatísticas reais da Visão Geral unificada (Cursos + Loja)
             const totalAlunos = alunos.length;
             const totalFaturamento = 
-                pagamentos.filter(p => ['aprovado', 'pago', 'concluído'].includes((p.status || '').toLowerCase())).reduce((acc, curr) => acc + affiliateSaleValue(curr), 0) +
-                vendasLoja.filter(p => ['aprovado', 'pago', 'concluído'].includes((p.status || '').toLowerCase())).reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+                pagamentos.filter(p => ['aprovado', 'pago', 'concluído'].includes((p.status || '').toLowerCase())).reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0) +
+                vendasLoja.filter(p => ['aprovado', 'pago', 'concluído'].includes((p.status || '').toLowerCase())).reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
             
             const totalCursos = cursos.filter(c => c.ativo).length;
             const totalCampanhas = popups.length;
@@ -21398,7 +21314,7 @@ const handleSendPasswordReset = (email) => {
             printWindow.document.close();
         };
 
-        switch (userRole === 'affiliate' ? 'produtos_links' : activeTab === 'overview' ? 'dashboard' : activeTab) {
+        switch (activeTab === 'overview' ? 'dashboard' : activeTab) {
             case 'afiliados':
     if (!hasPermission('afiliados')) return <div className="flex flex-col items-center justify-center h-full text-slate-500"><Icons.Shield className="w-16 h-16 mb-4" /><h3 className="text-xl font-bold">Acesso Restrito</h3></div>;
     return <AdminAffiliatesTab 
@@ -21525,7 +21441,7 @@ case 'niveis':
                                 const vd = v.createdAt?.seconds ? new Date(v.createdAt.seconds * 1000) : new Date();
                                 return vd.getDate() === now.getDate() && vd.getMonth() === now.getMonth() && vd.getFullYear() === now.getFullYear() && vd.getHours() === i;
                             });
-                            const sum = vendasNoFiltro.reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+                            const sum = vendasNoFiltro.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
                             data.push({ name: `${i}h`, faturamento: sum, vendas: vendasNoFiltro.length });
                         }
                     } else if (currentFilter === '7 Dias' || currentFilter === '30 Dias') {
@@ -21537,7 +21453,7 @@ case 'niveis':
                                 const vd = v.createdAt?.seconds ? new Date(v.createdAt.seconds * 1000) : new Date();
                                 return vd.getDate() === d.getDate() && vd.getMonth() === d.getMonth() && vd.getFullYear() === d.getFullYear();
                             });
-                            const sum = vendasNoFiltro.reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+                            const sum = vendasNoFiltro.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
                             data.push({ name: d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), faturamento: sum, vendas: vendasNoFiltro.length });
                         }
                     } else if (currentFilter === 'Anual') {
@@ -21548,7 +21464,7 @@ case 'niveis':
                                 const vd = v.createdAt?.seconds ? new Date(v.createdAt.seconds * 1000) : new Date();
                                 return vd.getMonth() === d.getMonth() && vd.getFullYear() === d.getFullYear();
                             });
-                            const sum = vendasNoFiltro.reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+                            const sum = vendasNoFiltro.reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
                             data.push({ name: d.toLocaleDateString('pt-BR', { month: 'short' }), faturamento: sum, vendas: vendasNoFiltro.length });
                         }
                     }
@@ -21566,8 +21482,8 @@ case 'niveis':
                 const totalModulosReal = cursos.reduce((acc, curso) => acc + (curso.modulos ? curso.modulos.length : 0), 0);
                 
                 // Faturamento Real para Gráfico de Pizza
-                const fatCursos = pagamentos.filter(p => ['aprovado', 'pago', 'concluído'].includes((p.status || '').toLowerCase())).reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
-                const fatLoja = vendasLoja.filter(p => ['aprovado', 'pago', 'concluído'].includes((p.status || '').toLowerCase())).reduce((acc, curr) => acc + affiliateSaleValue(curr), 0);
+                const fatCursos = pagamentos.filter(p => ['aprovado', 'pago', 'concluído'].includes((p.status || '').toLowerCase())).reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
+                const fatLoja = vendasLoja.filter(p => ['aprovado', 'pago', 'concluído'].includes((p.status || '').toLowerCase())).reduce((acc, curr) => acc + (parseFloat(curr.valor || curr.price) || 0), 0);
                 const pieDataDist = [
                     { name: 'Cursos', value: fatCursos > 0 ? fatCursos : 1, fill: '#2563eb' }, // Azul
                     { name: 'Loja', value: fatLoja > 0 ? fatLoja : 1, fill: '#93c5fd' }, // Azul claro
@@ -23530,11 +23446,6 @@ case 'categorias':
                                                     <label className={`text-xs font-bold uppercase tracking-wider mb-1 block ${theme.textSec}`}>Email de Acesso</label>
                                                     <input type="email" value={editingMember.email} onChange={e => setEditingMember({...editingMember, email: e.target.value})} className={`w-full px-4 py-3 rounded-lg border ${theme.input}`} />
                                                 </div>
-                                                {editingMember.id && <label className="block text-xs font-bold">UID do login no Firebase Authentication
-                                                    <input value={editingMember.uid || ''} onChange={e=>setEditingMember({...editingMember,uid:e.target.value.trim()})} className={`w-full mt-2 px-4 py-3 rounded-lg border ${theme.input}`} />
-                                                    <span className="block mt-2 font-normal text-slate-400">Use o UID da conta correspondente ao e-mail acima. Salvar um afiliado antigo da equipe também cria seu vínculo em Afiliados.</span>
-                                                </label>}
-
 
                                             </div>
 
@@ -26014,16 +25925,6 @@ case 'acelerador':
         
    // --- TELA DE LOGIN, RECUPERAÇÃO E SUCESSO (DESIGN LUXURY V6 - FINAL) ---
 
-    if (!isAuthenticated && auth.currentUser) {
-        return <main className="min-h-screen grid place-items-center bg-black text-white p-6"><section className="w-full max-w-xl rounded-2xl border border-slate-700 bg-slate-950 p-7">
-            <h1 className="text-2xl font-bold">{checkingAccess ? 'Carregando seu acesso' : 'Login reconhecido'}</h1>
-            <p className="mt-3 text-slate-300">{auth.currentUser.email}</p>
-            <p role={loginError?'alert':'status'} className="mt-5 text-sm leading-relaxed text-blue-200">{loginError || 'Conferindo as permissões do seu cadastro…'}</p>
-            <p className="mt-4 text-xs text-slate-400">Projeto: {firebaseConfig.projectId}<br/>UID da conta: <span className="break-all">{auth.currentUser.uid}</span></p>
-            <button disabled={checkingAccess} onClick={()=>setAccessRetry(v=>v+1)} className="mt-6 px-4 py-3 bg-blue-600 rounded-xl disabled:opacity-50">Consultar acesso novamente</button>
-            <button onClick={handleLogout} className="block mt-5 text-slate-300 underline">Sair ou usar outra conta</button>
-        </section></main>;
-    }
     if (!isAuthenticated) {
 
         return (
@@ -26216,8 +26117,6 @@ case 'acelerador':
 
                             // --- FORMULÁRIO DE LOGIN (PADRÃO) ---
                             <form onSubmit={handleLogin} className="space-y-5 animate-fade-in">
-                                <p className="text-xs text-slate-400">Projeto de acesso: {firebaseConfig.projectId}</p>
-                                {firebaseConfig.projectId !== originalFirebaseConfig.projectId && <a href={location.pathname+'?firebase=original'} className="block text-sm text-blue-300 underline">Voltar ao projeto original da plataforma</a>}
                                 <div>
                                     <label className="block text-[10px] font-bold text-[#fbbf24] uppercase tracking-widest mb-2 ml-1">Email Corporativo</label>
                                     <input 
@@ -26641,115 +26540,14 @@ case 'acelerador':
     
 async function signOut(authClient){await platformFirebaseSignOut(authClient);}
 
-// Confirmação de propriedade do e-mail. As regras do servidor também devem exigir email_verified.
-const platformEmailSendPending = new Map();
-const platformEmailSendTimes = new Map();
-function platformEmailRetryAt(uid) {
- let stored=0;try{stored=Number(sessionStorage.getItem('platform-email-resend:'+uid))||0;}catch(_){}
- return Math.max(platformEmailSendTimes.get(uid)||0,stored);
-}
-function platformRememberEmailSend(uid,until) {
- platformEmailSendTimes.set(uid,until);
- try{sessionStorage.setItem('platform-email-resend:'+uid,String(until));}catch(_){}
-}
-function platformAuthTimeout(promise, millis=15000) {
- let timer;
- return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('A conexão demorou. Tente novamente.'),{code:'platform/auth-timeout'})),millis);})]).finally(()=>clearTimeout(timer));
-}
-async function platformCheckVerifiedEmail(user) {
- const uid=user.uid;
- if(auth.currentUser?.uid!==uid)throw Error('A conta mudou. Entre novamente.');
- await platformAuthTimeout(reload(auth.currentUser));
- if(auth.currentUser?.uid!==uid)throw Error('A conta mudou. Entre novamente.');
- // A confirmação deve constar também no token usado nas regras do Firestore.
- const token=await platformAuthTimeout(getIdTokenResult(auth.currentUser,true));
- if(auth.currentUser?.uid!==uid)throw Error('A conta mudou. Entre novamente.');
- return token.claims.email_verified===true;
-}
-function platformSendVerificationEmail(user) {
- if(auth.currentUser?.uid!==user.uid)return Promise.reject(Error('A conta mudou. Entre novamente.'));
- if(platformEmailSendPending.has(user.uid))return platformEmailSendPending.get(user.uid);
- if(Date.now()<platformEmailRetryAt(user.uid))return Promise.resolve(false);
- // Este intervalo controla apenas reenvios da interface; não representa autorização de acesso.
- platformRememberEmailSend(user.uid,Date.now()+60000);
- const request=(async()=>{
-  try{auth.languageCode='pt-BR';await sendEmailVerification(user);return true;}
-  catch(error){if(error.code==='auth/too-many-requests'||error.code==='auth/quota-exceeded')platformRememberEmailSend(user.uid,Date.now()+300000);throw error;}
-  finally{platformEmailSendPending.delete(user.uid);}
- })();
- platformEmailSendPending.set(user.uid,request);return request;
-}
-function platformEmailError(error) {
- const messages={
-  'platform/auth-timeout':'A confirmação demorou. Confira a conexão e toque em Já confirmei meu e-mail para tentar novamente.',
-  'auth/network-request-failed':'Não foi possível conectar. Confira a internet e tente novamente.',
-  'auth/too-many-requests':'Muitas tentativas. Aguarde alguns minutos para pedir outro e-mail.',
-  'auth/quota-exceeded':'O limite de envios foi atingido. Tente mais tarde ou fale com o suporte.',
-  'auth/user-token-expired':'Sua sessão expirou. Saia da conta e entre novamente.',
-  'auth/invalid-user-token':'Sua sessão expirou. Saia da conta e entre novamente.',
-  'auth/user-disabled':'Esta conta foi desativada. Fale com o suporte.'
- };
- return messages[error?.code]||'Não foi possível confirmar seu e-mail. Tente novamente ou entre em contato com o suporte.';
-}
-function PlatformEmailSecurityGate({user,children}) {
- const [state,setState]=React.useState('checking'),[busy,setBusy]=React.useState(false),[message,setMessage]=React.useState(''),[error,setError]=React.useState(''),[now,setNow]=React.useState(Date.now());
- const alive=React.useRef(false),working=React.useRef(false),ready=React.useRef(false),generation=React.useRef(0);
- const current=()=>alive.current&&auth.currentUser?.uid===user.uid;
- const check=async(autoSend=false)=>{
-  if(working.current||ready.current||!current())return;
-  const ticket=++generation.current;working.current=true;setBusy(true);setError('');
-  const valid=()=>current()&&ticket===generation.current;
-  try{
-   const verified=await platformCheckVerifiedEmail(user);
-   if(!valid())return;
-   if(verified){ready.current=true;setState('ready');setMessage('E-mail confirmado. Carregando seu acesso…');return;}
-   setState('waiting');
-   if(autoSend){const sent=await platformAuthTimeout(platformSendVerificationEmail(auth.currentUser));if(valid())setMessage(sent?'Enviamos o link de confirmação. Confira sua caixa de entrada e o spam.':'Confira o link já enviado ao seu e-mail.');}
-   else setMessage('Aguardando a confirmação. O acesso será atualizado automaticamente ao confirmar o e-mail.');
-  }catch(failure){if(valid()){setState('waiting');setError(platformEmailError(failure));}}
-  finally{if(valid()){working.current=false;setBusy(false);setNow(Date.now());}}
- };
- React.useEffect(()=>{
-  alive.current=true;ready.current=false;working.current=false;setState('checking');check(true);
-  const clock=setInterval(()=>{if(current())setNow(Date.now());},1000);
-  const poll=setInterval(()=>{if(document.visibilityState!=='hidden')check(false);},5000);
-  const focus=()=>{if(document.visibilityState!=='hidden')check(false);};
-  window.addEventListener('focus',focus);document.addEventListener('visibilitychange',focus);
-  return()=>{alive.current=false;++generation.current;working.current=false;clearInterval(clock);clearInterval(poll);window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',focus);};
- },[user.uid]);
- const resend=async()=>{
-  if(working.current||Date.now()<platformEmailRetryAt(user.uid)||!current())return;
-  const ticket=++generation.current;working.current=true;setBusy(true);setError('');setMessage('');
-  try{const sent=await platformAuthTimeout(platformSendVerificationEmail(auth.currentUser));if(current()&&ticket===generation.current)setMessage(sent?'Enviamos um novo link. Confira também a pasta de spam.':'Aguarde um pouco antes de reenviar.');}
-  catch(failure){if(current()&&ticket===generation.current)setError(platformEmailError(failure));}
-  finally{if(current()&&ticket===generation.current){working.current=false;setBusy(false);setNow(Date.now());}}
- };
- const exit=async()=>{++generation.current;working.current=false;setBusy(false);setError('');try{await signOut(auth);}catch(failure){if(current())setError(platformEmailError(failure));}};
- if(state==='ready'&&auth.currentUser?.uid===user.uid)return children;
- const seconds=Math.max(0,Math.ceil((platformEmailRetryAt(user.uid)-now)/1000));
- return <main className="min-h-screen flex items-center justify-center bg-black text-slate-100 p-5" style={{fontFamily:'Inter,system-ui,sans-serif'}}>
-  <section className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-7" aria-labelledby="email-security-title">
-   <p className="text-blue-300 text-sm mb-3">PROTEÇÃO DA CONTA</p>
-   <h1 id="email-security-title" className="text-2xl font-bold mb-4">Confirme seu e-mail</h1>
-   {state==='checking'?<p role="status">Conferindo sua conta…</p>:<>
-    <p className="text-slate-300 leading-relaxed">Para abrir o painel, confirme que este e-mail pertence a você: <strong className="text-white break-all">{user.email}</strong>.</p>
-    <p className="text-slate-300 text-sm mt-3">Abra o link enviado ao seu e-mail e volte a esta página. A confirmação será reconhecida automaticamente. Você também pode tocar em “Já confirmei meu e-mail”.</p>
-    <button type="button" disabled={busy} onClick={()=>check(false)} className="w-full rounded-xl bg-blue-600 px-4 py-3 mt-6 font-bold disabled:opacity-50">{busy?'Aguarde…':'Já confirmei meu e-mail'}</button>
-    <button type="button" disabled={busy||seconds>0} onClick={resend} className="w-full rounded-xl border border-slate-600 px-4 py-3 mt-3 disabled:opacity-50">{seconds>0?'Reenviar link em '+seconds+'s':'Enviar outro link'}</button>
-   </>}
-   {message&&<p role="status" className="text-sm text-blue-200 mt-4">{message}</p>}
-   {error&&<p role="alert" className="text-sm text-amber-200 mt-4">{error}</p>}
-   <button type="button" onClick={exit} className="w-full text-slate-300 underline mt-6 disabled:opacity-50">Sair ou usar outra conta</button>
-  </section>
- </main>;
-}
+
 
 
 function PlatformAdminSecurityRoot(){
    const [user,setUser]=React.useState(auth.currentUser),[checking,setChecking]=React.useState(true);
-   React.useEffect(()=>onAuthStateChanged(auth,current=>{setUser(current);setChecking(false);}),[]);
+   React.useEffect(()=>onIdTokenChanged(auth,current=>{setUser(current);setChecking(false);}),[]);
    if(checking)return <main className="min-h-screen grid place-items-center bg-black text-blue-200">Conferindo sua sessão…</main>;
-   return user?<PlatformEmailSecurityGate key={user.uid} user={user}><App/></PlatformEmailSecurityGate>:<App/>;
+   return <App/>;
   }
 
 function platformCpfDigits(value){return String(value||'').replace(/\D/g,'');}
