@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- ADMIN LOGIN v26 — 27/10/2026: administrador por e-mail e senha; arquivo local abre diretamente o painel online. -->
 <!-- ADMIN APPEARANCE v25 — 27/10/2026: transparência e fundos gerais/por aba em Ajustes; menu v24 e conteúdo das telas preservados. -->
 <!-- ADMIN MENU v24 — 27/10/2026: menu lateral preto com seleção móvel; contadores apenas no dashboard, sem animar valores financeiros. -->
 <!-- SITE CURSOS — COMPATIBILIDADE COM OS HTMLS ANTIGOS — 23/10/2026
@@ -55,6 +56,12 @@ Gravações baixadas localmente podem ser enviadas ao R2 pelo administrador.
 <!-- Login direto por e-mail e senha, sem limitador local de tentativas. -->
 
   <meta charset="UTF-8">
+  <script id="admin-online-entry">
+  (function () {
+    if (window.location.protocol !== 'file:') return;
+    try { window.location.replace('https://site-cursos-a8ee1.web.app/administrador.html'); } catch (_) {}
+  })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Administração | Visão geral e setores</title>
   <link rel="icon" type="image/png" href="URL_DA_SUA_IMAGEM_AQUI" />
@@ -3373,7 +3380,12 @@ function platformAssertCurrentFaceUser(uid){
  if(!uid||auth?.currentUser?.uid!==uid)throw Object.assign(Error('A conta mudou. Entre novamente.'),{code:'face/account-changed'});
  return auth.currentUser;
 }
+function PlatformAdminHostedEntry(){
+ const url='https://site-cursos-a8ee1.web.app/administrador.html';
+ return <main style={{minHeight:'100vh',display:'grid',placeItems:'center',padding:24,background:'#030712',color:'#f5f7fb',fontFamily:'Inter,system-ui,sans-serif'}}><section style={{width:'100%',maxWidth:480,padding:30,border:'1px solid #243b60',borderRadius:20,background:'#080b12'}}><p style={{fontSize:11,letterSpacing:1.5,textTransform:'uppercase',color:'#60a5fa',margin:'0 0 18px'}}>A&amp;M Produções · Administrador</p><h1 style={{fontSize:26,fontWeight:650,lineHeight:1.25,margin:'0 0 15px'}}>Entre no painel do administrador</h1><p style={{fontSize:14,color:'#b8c4d8',lineHeight:1.7,margin:'0 0 23px'}}>Acesse o painel online com seu e-mail e senha.</p><a href={url} style={{display:'inline-block',padding:'13px 20px',borderRadius:12,background:'#2563eb',color:'#fff',textDecoration:'none',fontWeight:650,fontSize:14}}>Entrar no administrador</a></section></main>;
+}
 function PlatformHostedAccessNotice({admin=false}){
+ if(admin)return <PlatformAdminHostedEntry/>;
  const url='https://site-cursos-a8ee1.web.app/'+(admin?'administrador.html':'');
  return <main className="min-h-screen bg-slate-950 text-white grid place-items-center p-6"><section className="w-full max-w-lg rounded-2xl border border-blue-500/40 bg-slate-900 p-7 space-y-5"><p className="text-xs uppercase tracking-widest text-blue-400">A&amp;M Produções · Acesso seguro</p><h1 className="text-2xl font-bold">Abra a plataforma online</h1><p className="text-slate-300">Este arquivo foi aberto pela pasta Downloads. Para proteger suas fotos, o servidor facial aceita apenas os endereços online autorizados da plataforma.</p><p className="text-slate-300">Use o botão abaixo e entre na sua conta. O cadastro com CPF e celular e a confirmação pela câmera serão feitos na página online.</p><a href={url} className="inline-block rounded-xl bg-blue-600 text-white px-5 py-3 font-bold">{admin?'Abrir administrador online':'Abrir plataforma do aluno'}</a><p className="text-xs text-slate-400">Os arquivos HTML baixados servem para atualizar a hospedagem.</p></section></main>;
 }
@@ -27093,7 +27105,7 @@ case 'acelerador':
 
                             <p className="text-gray-500 text-sm">
 
-                                {isResettingPassword ? "Confirme seu e-mail para continuar." : "Acesso Exclusivo da Equipe"}
+                                {isResettingPassword ? "Confirme seu e-mail para continuar." : "Entre com seu e-mail e senha."}
 
                             </p>
 
@@ -27416,3 +27428,414 @@ case 'acelerador':
 
                                         Sim, Excluir
 
+                                    </button>
+
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                    )}
+
+                    {/* ================= FIM DO MODAL ================= */}
+
+
+                    {/* --- MODAL DE PREVIEW INTERNO DE MATERIAIS --- */}
+                    {previewMaterial && (
+                        <div 
+                            className="fixed inset-0 z-[999999] flex items-center justify-center p-4 sm:p-8 bg-black/90 backdrop-blur-md animate-fade-in" 
+                            onClick={() => setPreviewMaterial(null)}
+                        >
+                            <div 
+                                className="relative w-full max-w-5xl h-[85vh] flex flex-col bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-slate-200 dark:border-slate-700 animate-scale-in" 
+                                onClick={e => e.stopPropagation()}
+                            >
+                                {/* Cabeçalho do Preview */}
+                                <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/80 shrink-0">
+                                    <h3 className={`font-bold ${theme.text} truncate pr-4 flex items-center gap-2`}>
+                                        <Icons.FileText className="text-indigo-500 w-5 h-5"/>
+                                        {previewMaterial.titulo || 'Visualização de Material'}
+                                    </h3>
+                                    <div className="flex items-center gap-3">
+                                        <a href={previewMaterial.url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-indigo-500 hover:text-indigo-600 flex items-center gap-1 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1.5 rounded-lg transition-colors">
+                                            <Icons.Link className="w-3.5 h-3.5"/> Abrir Externo
+                                                    </a>
+                                                    <button onClick={() => setPreviewMaterial(null)} className="text-slate-400 hover:text-red-500 transition-colors p-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-full">
+                                                        <Icons.X className="w-5 h-5" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                
+                                {/* Área do Arquivo (PDF, Imagem ou Vídeo) */}
+                                <div className="flex-1 w-full h-full bg-slate-200 dark:bg-black p-2 sm:p-4 flex items-center justify-center overflow-hidden relative">
+                                    {/* Componente Inteligente de Renderização */}
+                                    {(() => {
+                                        const url = (previewMaterial.url || '').toLowerCase();
+                                        if (url.match(/\.(mp4|webm|ogg)$/)) {
+                                            return <video src={previewMaterial.url} controls autoPlay className="max-w-full max-h-full rounded-lg shadow-lg" />;
+                                        } else if (url.match(/\.(jpeg|jpg|gif|png|webp)$/)) {
+                                            return <img src={previewMaterial.url} className="max-w-full max-h-full object-contain rounded-lg shadow-lg" alt="Preview" />;
+                                        } else {
+                                            // Iframe Universal para PDFs
+                                            return <iframe src={previewMaterial.url} className="w-full h-full bg-white rounded-lg shadow-lg" title="Preview PDF"></iframe>;
+                                        }
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    
+                    
+                    {/* 2. MODAL DE EXCLUSÃO DE CATEGORIA */}
+
+                    {categoryToDelete && (
+
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+
+                            <div className={`${theme.card} max-w-sm w-full p-6 rounded-2xl shadow-2xl border ${theme.divider} text-center animate-scale-in`}>
+
+                                <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+
+                                    <Icons.Trash2 className="w-6 h-6" />
+
+                                </div>
+
+                                <h3 className={`text-lg font-bold ${theme.text} mb-2`}>Excluir Categoria?</h3>
+
+                                <p className={`text-sm ${theme.textSec} mb-6`}>
+
+                                    Tem certeza que deseja apagar <strong>"{categoryToDelete}"</strong>? <br/>Isso não pode ser desfeito.
+
+                                </p>
+
+                                <div className="flex gap-3">
+
+                                    <button onClick={() => setCategoryToDelete(null)} className="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">Cancelar</button>
+
+                                    <button onClick={executeDeleteCategory} className="flex-1 px-4 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors shadow-lg">Sim, Excluir</button>
+
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                    )}
+
+
+
+                    {/* 3. MODAL DE EDIÇÃO DE CATEGORIA */}
+
+                    {categoryToEdit && (
+
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+
+                            <div className={`${theme.card} max-w-sm w-full p-6 rounded-2xl shadow-2xl border ${theme.divider} animate-scale-in`}>
+
+                                <div className="text-center mb-4">
+
+                                    <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-3">
+
+                                        <Icons.Edit className="w-6 h-6" />
+
+                                    </div>
+
+                                    <h3 className={`text-lg font-bold ${theme.text}`}>Editar Categoria</h3>
+
+                                </div>
+
+                                <div className="mb-6">
+
+                                    <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${theme.textSec}`}>Nome da Categoria</label>
+
+                                    <input 
+
+                                        type="text" 
+
+                                        value={editCategoryInput}
+
+                                        onChange={(e) => setEditCategoryInput(e.target.value)}
+
+                                        className={`w-full px-4 py-3 rounded-lg border ${theme.input} font-bold focus:ring-2 focus:ring-indigo-500`}
+
+                                        placeholder="Digite o novo nome..."
+
+                                        autoFocus
+
+                                        onKeyDown={(e) => e.key === 'Enter' && executeEditCategory()}
+
+                                    />
+
+                                </div>
+
+                                <div className="flex gap-3">
+
+                                    <button onClick={() => setCategoryToEdit(null)} className="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">Cancelar</button>
+
+                                    <button onClick={executeEditCategory} disabled={!editCategoryInput.trim()} className="flex-1 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors shadow-lg disabled:opacity-50">Salvar</button>
+
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                    )}
+
+                    
+
+{/* INÍCIO DO MODAL DO CÉREBRO DA IA */}
+            
+            {/* FIM DO MODAL DO CÉREBRO DA IA */}
+
+
+                       </main>
+                </div>
+            );
+        } 
+        try {
+            const container = document.getElementById('root');
+            if (container) {
+                const root = createRoot(container);
+                root.render(
+                    <ErrorBoundary>
+                        {location.protocol==='file:'?<PlatformHostedAccessNotice admin/>:<PlatformAdminSecurityRoot />}
+                    </ErrorBoundary>
+                );
+                console.log("Painel Admin montado com sucesso.");
+            } else {
+                console.error("ERRO: Div 'root' não encontrada no HTML.");
+            }
+        } catch (renderError) {
+            console.error("Erro fatal ao renderizar o painel:", renderError);
+        }
+
+    
+async function signOut(authClient){const current=authClient===auth?authClient.currentUser:null;try{if(current)await platformFaceBeforeLogout(current);}catch(_){}finally{await platformFirebaseSignOut(authClient);}}
+
+
+
+
+function PlatformAdminSecurityRoot(){
+ const [state,setState]=React.useState({checking:true,user:null,access:null,error:''});
+ React.useEffect(()=>{let alive=true,version=0,stops=[];const clear=()=>{stops.forEach(stop=>stop());stops=[];};
+  const unsubscribe=onIdTokenChanged(auth,async current=>{const request=++version;clear();if(!current){if(alive)setState({checking:false,user:null,access:null,error:''});return;}if(alive)setState(old=>({...old,checking:true}));
+   const resolve=async()=>{try{const access=await platformResolveAdminAccess(current);if(alive&&request===version&&auth.currentUser?.uid===current.uid)setState({checking:false,user:current,access,error:''});return access;}catch(error){if(alive&&request===version)setState({checking:false,user:current,access:null,error:error.message});return null;}};
+   const access=await resolve();if(!alive||request!==version)return;
+   if(access?.teamId)stops.push(onSnapshot(doc(db,'team',access.teamId),()=>resolve(),()=>{if(alive)setState(old=>({...old,checking:false,error:'Não foi possível confirmar suas permissões.'}));}));
+   stops.push(onSnapshot(doc(db,'users',current.uid),()=>resolve(),()=>{}));
+  });return()=>{alive=false;version++;clear();unsubscribe();};
+ },[]);
+ if(state.checking)return <main className="min-h-screen grid place-items-center bg-black text-blue-200">Conferindo sua sessão e permissões…</main>;
+ if(state.error)return <main className="min-h-screen grid place-items-center bg-slate-950 text-white p-6"><section className="max-w-lg rounded-2xl border border-slate-700 p-6 space-y-4"><p role="alert">{state.error}</p><button onClick={()=>location.reload()} className="text-blue-300 underline">Tentar novamente</button><button onClick={()=>signOut(auth)} className="block underline">Sair</button></section></main>;
+ const key=JSON.stringify([state.access?.role,state.access?.permissions]);
+ if(state.user&&state.access&&state.access.role!=='admin'&&!platformIsBootstrapAdmin(state.user.uid))return <PlatformFaceGate key={state.user.uid} user={state.user}><App key={key}/></PlatformFaceGate>;
+ return <App key={key}/>;
+}
+
+function platformCpfDigits(value){return String(value||'').replace(/\D/g,'');}
+function platformCpfValid(value){
+ const cpf=platformCpfDigits(value);
+ if(cpf.length!==11||/^(\d)\1{10}$/.test(cpf))return false;
+ for(let size=9;size<=10;size++){
+  let sum=0;for(let i=0;i<size;i++)sum+=Number(cpf[i])*(size+1-i);
+  const digit=(sum*10)%11;
+  if(Number(cpf[size])!==(digit===10?0:digit))return false;
+ }return true;
+}
+function platformCpfFormat(value){return platformCpfDigits(value).slice(0,11).replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');}
+function platformAssertCurrentAccount(expectedUid){
+ const current=auth?.currentUser;
+ if(!current||expectedUid&&current.uid!==expectedUid)throw Object.assign(Error('Esta operação só pode ser feita no perfil da conta conectada. Entre no seu próprio perfil.'),{code:'platform/account-mismatch'});
+ return current;
+}
+// Cadastro do Site Cursos, protegido pelas regras identity09 já publicadas.
+// O navegador não recebe permissões administrativas nem chaves privadas.
+function createSiteCursosIdentityClient(sdk) {
+  const { db, doc, getDocFromServer, runTransaction, serverTimestamp, assertUser, cpfValid } = sdk;
+  const error = (message, code, status = 400) => Object.assign(new Error(message), { code, status });
+  const digits = value => String(value || '').replace(/\D/g, '');
+  const phone = value => {
+    const raw = digits(value);
+    const normalized = '+' + (raw.length === 11 ? '55' + raw : raw);
+    if (!/^\+55[1-9][0-9]9[0-9]{8}$/.test(normalized)) throw error('Informe um celular brasileiro com DDD e nove dígitos.', 'platform/invalid-phone');
+    return normalized;
+  };
+  const cpf = value => {
+    const valueDigits = digits(value);
+    if (!cpfValid(valueDigits)) throw error('Informe um CPF válido com 11 dígitos.', 'platform/invalid-cpf');
+    return valueDigits;
+  };
+  const configRef = doc(db, 'config', 'identity09');
+  const profileRef = uid => doc(db, 'users', uid);
+  const stateRef = uid => doc(db, 'accountStates', uid);
+  const claimRef = (kind, value) => doc(db, 'identityClaims', kind + '_' + value.replace(/^\+/, ''));
+  const ensureAccount = snapshot => {
+    if (snapshot.exists() && snapshot.data().status !== 'active') throw error('Esta conta está suspensa ou aguardando revisão administrativa.', 'platform/account-inactive', 403);
+  };
+  const ensureReady = snapshot => {
+    if (snapshot.data()?.ready !== true) throw error('O índice de CPF ainda precisa ser preparado pelo administrador.', 'platform/cpf-not-initialized', 503);
+  };
+  async function readClaim(read, ref, kind, uid) {
+    let snap;
+    try { snap = await read(ref); }
+    catch (cause) {
+      if (cause.code === 'permission-denied' || cause.code === 'firestore/permission-denied') throw error(kind === 'cpf' ? 'Este CPF já está vinculado a outra conta.' : 'Este celular já está vinculado a outra conta.', 'platform/' + kind + '-in-use', 409);
+      throw cause;
+    }
+    if (snap.exists() && (snap.data().uid !== uid || snap.data().kind !== kind)) throw error(kind === 'cpf' ? 'Este CPF já está vinculado a outra conta.' : 'Este celular já está vinculado a outra conta.', 'platform/' + kind + '-in-use', 409);
+    return snap;
+  }
+  async function status(user) {
+    const [profile, account, config] = await Promise.all([
+      getDocFromServer(profileRef(user.uid)), getDocFromServer(stateRef(user.uid)), getDocFromServer(configRef)
+    ]);
+    assertUser(user.uid); ensureAccount(account); ensureReady(config);
+    const data = profile.data() || {};
+    const own = Object.fromEntries(['name','cpf','phone','rg','birthDate','zipCode','address','number','neighborhood','city','state','bio','photoBase64'].filter(key => typeof data[key] === 'string').map(key => [key, data[key]]));
+    if (own.phone?.startsWith('+55')) own.phone = own.phone.slice(3);
+    let active = false;
+    if (data.identityLocked === true && data.profileComplete === true && cpfValid(data.cpfCanonical || '') && /^\+55[1-9][0-9]9[0-9]{8}$/.test(data.phoneCanonical || '') && data.cpf === data.cpfCanonical && data.phone === data.phoneCanonical) {
+      const [c, p] = await Promise.all([
+        readClaim(getDocFromServer, claimRef('cpf', data.cpfCanonical), 'cpf', user.uid),
+        readClaim(getDocFromServer, claimRef('phone', data.phoneCanonical), 'phone', user.uid)
+      ]);
+      assertUser(user.uid); active = c.exists() && p.exists();
+    }
+    return { active, uid: user.uid, profile: own, cpfNormalized: active ? data.cpfCanonical : undefined };
+  }
+  async function save(user, input) {
+    const normalizedCpf = cpf(input.cpf), normalizedPhone = phone(input.phone);
+    const clean = {};
+    for (const key of ['name','rg','birthDate','zipCode','address','number','neighborhood','city','state','bio','photoBase64']) {
+      if (input[key] === undefined) continue;
+      if (typeof input[key] !== 'string') throw error('Há um campo de cadastro inválido.', 'platform/invalid-profile');
+      clean[key] = input[key].trim();
+    }
+    for (const key of ['zipCode','address','number','neighborhood','city']) if (!clean[key]) throw error('Complete o CEP e o endereço do seu cadastro.', 'platform/incomplete-profile');
+    if (digits(clean.zipCode).length !== 8) throw error('Informe um CEP válido com oito dígitos.', 'platform/invalid-profile');
+    assertUser(user.uid);
+    // A regra de criação aceita somente o perfil básico; CPF/telefone são
+    // vinculados depois, em uma operação atômica com os dois índices.
+    await runTransaction(db, async tx => {
+      const [existing, account, config] = await Promise.all([
+        tx.get(profileRef(user.uid)), tx.get(stateRef(user.uid)), tx.get(configRef)
+      ]);
+      assertUser(user.uid); ensureAccount(account); ensureReady(config);
+      if (!existing.exists()) tx.set(profileRef(user.uid), {
+        name: clean.name || user.displayName || '', email: user.email || '', role: 'student',
+        createdAt: serverTimestamp(), profileComplete: false
+      });
+    });
+    await runTransaction(db, async tx => {
+      const [existing, account, config] = await Promise.all([
+        tx.get(profileRef(user.uid)), tx.get(stateRef(user.uid)), tx.get(configRef)
+      ]);
+      assertUser(user.uid); ensureAccount(account); ensureReady(config);
+      const before = existing.data() || {};
+      if (before.identityLocked === true && (before.cpfCanonical !== normalizedCpf || before.phoneCanonical !== normalizedPhone)) throw error('O CPF e o celular já vinculados não podem ser substituídos neste perfil.', 'platform/identity-locked', 409);
+      const [cpfClaim, phoneClaim] = await Promise.all([
+        readClaim(ref => tx.get(ref), claimRef('cpf', normalizedCpf), 'cpf', user.uid),
+        readClaim(ref => tx.get(ref), claimRef('phone', normalizedPhone), 'phone', user.uid)
+      ]);
+      assertUser(user.uid);
+      if (!cpfClaim.exists()) tx.set(claimRef('cpf', normalizedCpf), { uid: user.uid, kind: 'cpf', createdAt: serverTimestamp() });
+      if (!phoneClaim.exists()) tx.set(claimRef('phone', normalizedPhone), { uid: user.uid, kind: 'phone', createdAt: serverTimestamp() });
+      tx.set(profileRef(user.uid), {
+        ...clean, cpf: normalizedCpf, cpfCanonical: normalizedCpf,
+        phone: normalizedPhone, phoneCanonical: normalizedPhone,
+        identityLocked: true, profileComplete: true, updatedAt: serverTimestamp()
+      }, { merge: true });
+    });
+    assertUser(user.uid);
+    return { saved: true, active: true, uid: user.uid, cpfNormalized: normalizedCpf };
+  }
+  return async function request(payload, user) {
+    assertUser(user.uid);
+    for (const key of ['uid','userId','buyerUid']) if (payload[key] && payload[key] !== user.uid) throw error('A operação deve usar o perfil da conta conectada.', 'platform/account-mismatch', 403);
+    if (payload.action === 'profile-status') return status(user);
+    if (payload.action === 'check') {
+      const result = await status(user);
+      if (!result.active) throw error('Complete seu cadastro antes de continuar.', 'platform/cpf-required', 409);
+      return { uid: user.uid, cpfNormalized: result.cpfNormalized };
+    }
+    if (payload.action === 'save-profile') return save(user, payload.profile || {});
+    if (payload.action === 'reserve') {
+      const normalized = cpf(payload.cpf);
+      const [account, config] = await Promise.all([getDocFromServer(stateRef(user.uid)), getDocFromServer(configRef)]);
+      assertUser(user.uid); ensureAccount(account); ensureReady(config);
+      await readClaim(getDocFromServer, claimRef('cpf', normalized), 'cpf', user.uid);
+      assertUser(user.uid);
+      // A exclusividade é confirmada no salvamento atômico do cadastro.
+      return { available: true, reserved: false, requiresProfileCompletion: true };
+    }
+    if (payload.action === 'release-reservation') return { released: true, reserved: false };
+    if (payload.action === 'security-status' || payload.action === 'initialize') {
+      const config = await getDocFromServer(configRef); assertUser(user.uid); ensureReady(config);
+      return { ready: true, report: null };
+    }
+    throw error('Operação de cadastro inválida.', 'platform/invalid-identity-action');
+  };
+}
+
+let platformSiteCursosIdentityClient;
+const platformUsesSiteCursosIdentity = (settings=window.platformPublicSettings||{}) => firebaseConfig.projectId==='site-cursos-a8ee1'&&!settings.identityBackendUrl&&!settings.paymentBackendUrl&&!window.PLATFORM_IDENTITY_BACKEND_URL;
+async function platformIdentityRequest(payload,settings=window.platformPublicSettings||{},expectedUid){
+ const current=platformAssertCurrentAccount(expectedUid);let url;
+ if(platformUsesSiteCursosIdentity(settings)){
+  if(!platformSiteCursosIdentityClient)platformSiteCursosIdentityClient=createSiteCursosIdentityClient({db,doc,getDocFromServer,runTransaction:inactivityTransaction,serverTimestamp,assertUser:platformAssertCurrentAccount,cpfValid:platformCpfValid});
+  return platformSiteCursosIdentityClient(payload,current);
+ }
+ try{
+  const configured=settings.identityBackendUrl||window.PLATFORM_IDENTITY_BACKEND_URL;
+  url=configured?new URL(configured,location.href):settings.paymentBackendUrl?new URL('./identity',new URL(settings.paymentBackendUrl,location.href)):new URL('./api/identity',location.href);
+ }catch(_){throw Error('O endereço do serviço interno de segurança é inválido.');}
+ if(url.protocol!=='https:'&&!(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname)))throw Error('Configure HTTPS para o serviço interno de segurança.');
+ const token=await current.getIdToken(),controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),30000);
+ try{
+  const response=await fetch(url.href,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal,cache:'no-store'});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Object.assign(Error(data.error||(response.status===404?'O serviço interno de segurança precisa ser publicado. Solicite a configuração ao administrador.':'Não foi possível validar a segurança desta conta.')),{code:data.code||'platform/identity-error',status:response.status});
+  platformAssertCurrentAccount(current.uid);return data;
+ }catch(error){if(error.name==='AbortError')throw Error('A verificação de segurança demorou. Confira sua internet e tente novamente.');throw error;}
+ finally{clearTimeout(timeout);}
+}
+async function platformAssertPurchaseIdentity(expectedUid){
+ const current=platformAssertCurrentAccount(expectedUid);
+ const data=await platformIdentityRequest({action:'check'},undefined,current.uid);
+ if(data.uid!==current.uid||!platformCpfValid(data.cpfNormalized))throw Error('O CPF não está vinculado ao seu perfil. Complete seu cadastro antes de comprar.');
+ return data;
+}
+async function platformSaveOwnProfile(user,form){
+ platformAssertCurrentAccount(user.uid);
+ if(!platformCpfValid(form.cpf))throw Error('Informe um CPF válido com 11 dígitos.');
+ const fields=['name','cpf','rg','phone','birthDate','zipCode','address','number','neighborhood','city','state','bio','photoBase64'];
+ const profile=Object.fromEntries(fields.filter(key=>form[key]!==undefined).map(key=>[key,form[key]]));
+ return platformIdentityRequest({action:'save-profile',profile},undefined,user.uid);
+}
+function PlatformStudentIdentityGate({user,children}){
+ const [state,setState]=React.useState({loading:true,active:false,error:'',profile:{}}),[retry,setRetry]=React.useState(0);
+ React.useEffect(()=>{let alive=true;setState(old=>({...old,loading:true,error:''}));platformIdentityRequest({action:'profile-status'},undefined,user.uid).then(data=>{if(alive)setState({loading:false,active:data.active===true,error:'',profile:data.profile||{}});}).catch(error=>{if(alive)setState({loading:false,active:false,error:error.message,profile:{}});});return()=>{alive=false;};},[user.uid,retry]);
+ if(state.active)return children;
+ if(!state.loading&&!state.error)return <CompleteRegistrationModal user={user} initialProfile={state.profile} onSuccess={()=>setRetry(value=>value+1)}/>;
+ return <main className="min-h-screen bg-black text-white grid place-items-center p-6"><section className="max-w-lg rounded-2xl border border-slate-700 p-7 bg-slate-950"><h1 className="font-bold text-xl">Segurança do seu cadastro</h1><p role={state.error?'alert':'status'} className="mt-4 text-sm leading-relaxed text-slate-300">{state.loading?'Verificando o CPF vinculado à sua conta…':state.error}</p>{state.error&&<button type="button" className="mt-5 rounded-xl bg-blue-600 px-4 py-3 font-bold" onClick={()=>setRetry(value=>value+1)}>Tentar novamente</button>}<button type="button" className="block mt-5 text-slate-400 underline" onClick={()=>signOut(auth)}>Sair da conta</button></section></main>;
+}
+function PlatformIdentityAdminCard({settings,showNotification}){
+ const [state,setState]=React.useState({loading:true,ready:false,error:'',report:null}),[busy,setBusy]=React.useState(false);
+ const refresh=async()=>{try{const data=await platformIdentityRequest({action:'security-status'},settings);setState({loading:false,ready:data.ready,error:'',report:data.report||null});}catch(error){setState({loading:false,ready:false,error:error.message,report:null});}};
+ React.useEffect(()=>{refresh();},[settings?.identityBackendUrl,settings?.paymentBackendUrl]);
+ const initialize=async()=>{if(busy)return;setBusy(true);try{const data=await platformIdentityRequest({action:'initialize'},settings);setState({loading:false,ready:data.ready,error:'',report:data.report});showNotification?.(platformUsesSiteCursosIdentity(settings)?'As regras de CPF e celular exclusivos estão ativas no Firebase.':'Índice de CPF atualizado. Cadastros com conflitos permanecem bloqueados.','success');}catch(error){setState(old=>({...old,error:error.message}));showNotification?.(error.message,'error');}finally{setBusy(false);}};
+ return <section className="mt-5 rounded-2xl border border-slate-700 bg-[#090c12] p-6 text-white" aria-label="Segurança de CPF e compras">
+  <h3 className="text-lg font-bold">Segurança de CPF e compras</h3><p className="text-sm text-slate-400 mt-2">Cada CPF fica vinculado a uma única conta. Compras, matrículas e resgates usam o perfil da pessoa conectada, com verificação interna no servidor.</p>
+  <p className="text-sm mt-4 text-blue-200" role="status">{state.loading?'Verificando configuração…':state.ready?'Proteção interna preparada.': 'Inicialize os CPFs existentes antes de liberar novos cadastros e compras.'}</p>
+  {state.error&&<p role="alert" className="mt-3 text-sm text-red-300">{state.error}</p>}
+  {state.report&&<div className="mt-4 text-sm text-slate-300"><p>{state.report.indexed||0} contas vinculadas · {state.report.conflictCount||0} CPFs em conflito · {state.report.invalidCount||0} CPFs inválidos</p>{(state.report.conflicts||[]).length>0&&<details className="mt-3"><summary className="cursor-pointer text-amber-200">Ver conflitos que exigem revisão</summary><ul className="mt-2 space-y-2">{state.report.conflicts.map((item,index)=><li key={index}>{item.cpfMasked}: {(item.accounts||[]).map(account=>account.name||account.uid).join(' / ')}</li>)}</ul><p className="mt-3 text-xs">Revise os cadastros envolvidos na área de alunos e execute a atualização novamente. Nenhuma conta será apagada ou terá compras transferidas.</p></details>}</div>}
+  <button type="button" onClick={initialize} disabled={busy||state.loading} className="mt-5 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold disabled:opacity-50">{busy?'Verificando os cadastros…':platformUsesSiteCursosIdentity(settings)?'Conferir cadastro no Firebase':state.ready?'Atualizar e revisar CPFs existentes':'Inicializar proteção de CPF'}</button>
+  <p className="text-xs text-slate-400 mt-3">Acesse com e-mail e senha ou Google. O Site Cursos não exige código de autenticador nem confirmação por SMS. O CPF e o celular fazem parte do cadastro da plataforma.</p>
+ </section>;
+}
+
+</script>
+</body>
+</html>
