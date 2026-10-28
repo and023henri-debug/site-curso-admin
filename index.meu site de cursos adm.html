@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- ADMIN v27: fundos com resolução original, transparência sem desfoque e limpeza automática de mídia sem referência no Cloud R2. -->
+<!-- ADMIN v29: fundos com resolução original, transparência sem desfoque e limpeza automática de mídia sem referência no Cloud R2. -->
 <!-- ADMIN LOGIN v26 — 27/10/2026: administrador por e-mail e senha; arquivo local abre diretamente o painel online. -->
 <!-- ADMIN APPEARANCE v25 — 27/10/2026: transparência e fundos gerais/por aba em Ajustes; menu v24 e conteúdo das telas preservados. -->
 <!-- ADMIN MENU v24 — 27/10/2026: menu lateral preto com seleção móvel; contadores apenas no dashboard, sem animar valores financeiros. -->
@@ -3918,12 +3918,69 @@ function platformStorageEndpoint(settings=window.platformPublicSettings||{}){
  if(!/\/api\/uploads\/?$/.test(url.pathname))throw Error('O endereço do serviço de arquivos deve terminar em /api/uploads.');
  return url;
 }
-async function platformStorageRequest(path,{method='GET',body,settings,signal,timeoutMs=180000}={}){
- const endpoint=platformStorageEndpoint(settings),url=new URL(endpoint.href);url.pathname=url.pathname.replace(/\/api\/uploads\/?$/,'/api/storage')+path.split('?')[0];url.search=path.includes('?')?'?'+path.split('?').slice(1).join('?'):'';
- const user=auth?.currentUser;if(!user)throw Error('Entre novamente para consultar os arquivos.');
- const uid=user.uid,token=await user.getIdToken();if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou. Entre novamente.');
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs),abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});
- try{const response=await fetch(url.href,{method,headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:controller.signal,redirect:'error',credentials:'omit',cache:'no-store'});const data=await response.json().catch(()=>({}));if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou durante a consulta.');if(!response.ok)throw Object.assign(Error(data.error||(response.status===404?'O endereço respondeu, mas o serviço de armazenamento atualizado não está publicado nesse servidor.':'O serviço de armazenamento não respondeu. Confira o endereço e a configuração do serviço.')),{code:data.code,status:response.status});return data;}catch(error){if(error.name==='AbortError')throw Error('A conferência do R2 não foi concluída. Tente novamente.');if(error instanceof TypeError)throw Object.assign(Error('Não foi possível alcançar o servidor de arquivos. Confira o endereço HTTPS e o CORS para este site.'),{code:'storage/network-error'});throw error;}finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+// Conferências e envios desta aba são serializados. Alterações do usuário têm
+// prioridade sobre a limpeza automática; a trava de segurança do servidor fica ativa.
+const platformStorageWork={running:false,foreground:[],background:[]};
+function platformStorageWaitNotice(message){
+ window.dispatchEvent(new CustomEvent('platform:storage-wait',{detail:{uid:auth?.currentUser?.uid,message}}));
+}
+function platformStorageAbortError(){return new DOMException('Operação cancelada.','AbortError');}
+function platformStorageOperation(task,{background=false,signal}={}){
+ const uid=auth?.currentUser?.uid;
+ return new Promise((resolve,reject)=>{
+  if(signal?.aborted){reject(platformStorageAbortError());return;}
+  const item={task:()=>{if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou. Entre novamente antes de continuar.');return task();},resolve,reject,signal,cancelled:false};
+  item.abort=()=>{item.cancelled=true;reject(platformStorageAbortError());};
+  signal?.addEventListener('abort',item.abort,{once:true});
+  if(!background&&platformStorageWork.running)platformStorageWaitNotice('Aguardando a conferência do armazenamento. Sua capa continua selecionada…');
+  platformStorageWork[background?'background':'foreground'].push(item);
+  platformStorageDrain();
+ });
+}
+async function platformStorageDrain(){
+ if(platformStorageWork.running)return;
+ let item;
+ do{item=platformStorageWork.foreground.shift()||platformStorageWork.background.shift();if(item?.cancelled)item.signal?.removeEventListener('abort',item.abort);}while(item?.cancelled);
+ if(!item)return;
+ platformStorageWork.running=true;
+ try{item.resolve(await item.task());}catch(error){item.reject(error);}
+ finally{item.signal?.removeEventListener('abort',item.abort);platformStorageWork.running=false;platformStorageDrain();}
+}
+function platformStorageRetryDelay(ms,signal){
+ return new Promise((resolve,reject)=>{
+  if(signal?.aborted){reject(platformStorageAbortError());return;}
+  const abort=()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(platformStorageAbortError());};
+  const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},ms);
+  signal?.addEventListener('abort',abort,{once:true});
+ });
+}
+async function platformStorageFetch(url,options,{background=false,deadline=Date.now()+180000}={}){
+ let attempts=0;const uid=auth?.currentUser?.uid;
+ for(;;){
+  if(options.signal?.aborted)throw platformStorageAbortError();
+  if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou. Entre novamente antes de continuar.');
+  const response=await fetch(url,options),data=await response.json().catch(()=>({}));
+  // Somente 423/storage/busy confirma que a operação não começou no servidor.
+  // Falhas de rede, respostas ambíguas e demais erros nunca repetem o envio.
+  if(response.status!==423||data.code!=='storage/busy')return {response,data};
+  // A limpeza em segundo plano cede a vez e será retomada no próximo ciclo.
+  if(background)return {response,data};
+  const remaining=deadline-Date.now();
+  if(remaining<=0)throw Object.assign(Error('A conferência do armazenamento ainda está em andamento. Sua seleção foi mantida. Aguarde um pouco e salve novamente.'),{code:'storage/busy',status:423});
+  if(!background)platformStorageWaitNotice('O armazenamento está sendo conferido. Vamos continuar automaticamente; mantenha esta página aberta…');
+  const delay=Math.min(remaining,Math.min(5000,750*2**Math.min(attempts++,3))+Math.floor(Math.random()*300));
+  await platformStorageRetryDelay(delay,options.signal);
+ }
+}
+
+async function platformStorageRequest(path,{method='GET',body,settings,signal,timeoutMs=180000,background=false}={}){
+ return platformStorageOperation(async()=>{
+  const endpoint=platformStorageEndpoint(settings),url=new URL(endpoint.href);url.pathname=url.pathname.replace(/\/api\/uploads\/?$/,'/api/storage')+path.split('?')[0];url.search=path.includes('?')?'?'+path.split('?').slice(1).join('?'):'';
+  const user=auth?.currentUser;if(!user)throw Error('Entre novamente para consultar os arquivos.');
+  const uid=user.uid,token=await user.getIdToken();if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou. Entre novamente.');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs),abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)controller.abort();
+  try{const {response,data}=await platformStorageFetch(url.href,{method,headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:controller.signal,redirect:'error',credentials:'omit',cache:'no-store'},{background,deadline:Date.now()+timeoutMs});if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou durante a consulta.');if(!response.ok)throw Object.assign(Error(data.error||(response.status===404?'O endereço respondeu, mas o serviço de armazenamento atualizado não está publicado nesse servidor.':'O serviço de armazenamento não respondeu. Confira o endereço e a configuração do serviço.')),{code:data.code,status:response.status});return data;}catch(error){if(error.name==='AbortError'){if(signal?.aborted)throw error;throw Error('A conferência do R2 não foi concluída. Sua seleção foi mantida. Tente salvar novamente.');}if(error instanceof TypeError)throw Object.assign(Error('Não foi possível alcançar o servidor de arquivos. Confira o endereço HTTPS e o CORS para este site.'),{code:'storage/network-error'});throw error;}finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+ },{background,signal});
 }
 async function platformStorageConnect(values){
  const fields={accountId:values.r2AccountId,bucket:values.r2BucketName,publicDomain:values.r2PublicDomain,accessKeyId:values.r2AccessKeyId,secretAccessKey:values.r2SecretAccessKey};
@@ -3931,9 +3988,12 @@ async function platformStorageConnect(values){
  return platformStorageRequest('/connection',{method:'POST',body:fields,settings:values});
 }
 async function platformManagedUpload(file,folder,settings,signal){
+ return platformStorageOperation(()=>platformManagedUploadNow(file,folder,settings,signal),{signal});
+}
+async function platformManagedUploadNow(file,folder,settings,signal){
  const endpoint=platformStorageEndpoint(settings),user=auth?.currentUser;if(!user)throw Error('Entre novamente antes de enviar.');
  const uid=user.uid,token=await user.getIdToken();if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou.');
- const send=async(url,options)=>{const response=await fetch(url,{...options,headers:{...options.headers,Authorization:'Bearer '+token},redirect:'error',credentials:'omit',cache:'no-store'});const data=await response.json().catch(()=>({}));if(!response.ok)throw Object.assign(Error(data.error||'O serviço não concluiu o envio. Confira o R2 na aba Memória.'),{code:data.code,status:response.status});if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou durante o envio.');return data;};
+ const send=async(url,options)=>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),180000),abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)controller.abort();let response,data;try{({response,data}=await platformStorageFetch(url,{...options,headers:{...options.headers,Authorization:'Bearer '+token},signal:controller.signal,redirect:'error',credentials:'omit',cache:'no-store'}));}catch(error){if(error.name==='AbortError'&&!signal?.aborted)throw Error('O envio não foi concluído a tempo. Sua capa foi mantida; tente salvar novamente.');throw error;}finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}if(!response.ok)throw Object.assign(Error(data.error||'O serviço não concluiu o envio. Confira o R2 na aba Memória.'),{code:data.code,status:response.status});if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou durante o envio.');return data;};
  let ticket;
  try{
   const reserved=await send(endpoint.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name||'arquivo',size:file.size,contentType:file.type||'application/octet-stream',folder:folder.endsWith('/')?folder:folder+'/',expectedBucket:settings?.r2BucketName||'',expectedAccountId:settings?.r2AccountId||''}),signal});
@@ -4011,31 +4071,34 @@ function PlatformStorageAutoCleanup({uid,enabled,settings}){
  const endpoint=settings?.uploadBackendUrl||settings?.r2UploadBackendUrl||'';
  React.useEffect(()=>{
   if(!enabled||!uid||!endpoint)return;
-  let stopped=false,running=false,timer=null,forbidden=false;
+  let stopped=false,running=false,timer=null,forbidden=false,nextRunAt=0;
   const run=async()=>{
-   if(stopped||running||forbidden||auth?.currentUser?.uid!==uid||document.visibilityState==='hidden')return;
+   if(stopped||running||forbidden||Date.now()<nextRunAt||auth?.currentUser?.uid!==uid||document.visibilityState==='hidden')return;
+   if(platformStorageWork.running||platformStorageWork.foreground.length){schedule();return;}
    running=true;let failed=false;
    try{
     const acknowledged=[];
     for(const url of platformStoragePending(uid)){
      if(stopped||auth?.currentUser?.uid!==uid)return;
-     try{await platformStorageRequest('/queue-url',{method:'POST',body:{url},settings});acknowledged.push(url);}catch(error){if(error.status===401||error.status===403)throw error;failed=true;}
+     try{await platformStorageRequest('/queue-url',{method:'POST',body:{url},settings,background:true});acknowledged.push(url);}catch(error){if(error.status===401||error.status===403)throw error;failed=true;}
     }
     platformStorageAcknowledge(uid,acknowledged);
-    const result=await platformStorageRequest('/cleanup',{method:'POST',settings});
+    const result=await platformStorageRequest('/cleanup',{method:'POST',settings,background:true});
     if(stopped||auth?.currentUser?.uid!==uid)return;
-    const pending=failed||result.pendingFailures||platformStoragePending(uid).length||acknowledged.length;
-    platformStorageCleanupNotify({uid,state:pending?'pending':'synced',deleted:Number(result.deleted)||0,message:pending?'Há arquivos aguardando sincronização. O painel fará uma nova tentativa automaticamente.':'Sincronização conferida. '+(Number(result.deleted)||0)+' arquivo(s) sem uso removido(s) do R2. Arquivos ainda utilizados foram preservados.'});
+    if(result.deferred)nextRunAt=Date.now()+Math.max(600000,Number(result.retryAfterSeconds||43200)*1000);
+    const pending=failed||result.deferred||result.pendingFailures||platformStoragePending(uid).length||acknowledged.length;
+    platformStorageCleanupNotify({uid,state:pending?'pending':'synced',deleted:Number(result.deleted)||0,message:result.deferred?'A limpeza em lote está agendada. As conferências completas respeitam um intervalo mínimo de 12 horas para preservar as leituras do Firebase.':pending?'Há arquivos aguardando sincronização. O painel fará uma nova tentativa automaticamente.':'Sincronização conferida. '+(Number(result.deleted)||0)+' arquivo(s) sem uso removido(s) do R2. Arquivos ainda utilizados foram preservados.'});
     if(acknowledged.length)schedule();
    }catch(error){
     if(error.status===401||error.status===403)forbidden=true;
+    nextRunAt=Date.now()+1800000;
     if(!stopped&&auth?.currentUser?.uid===uid)platformStorageCleanupNotify({uid,state:'pending',message:'A limpeza do R2 está pendente. Confira a conexão em Memória; o painel tentará novamente quando ela estiver disponível.'});
    }finally{running=false;}
   };
-  const schedule=()=>{clearTimeout(timer);timer=setTimeout(run,12000);};
+  const schedule=()=>{clearTimeout(timer);timer=setTimeout(run,Math.max(12000,nextRunAt-Date.now()));};
   const changed=event=>{if(event.detail?.uid===uid)schedule();};
   const resume=()=>{if(document.visibilityState==='visible')schedule();};
-  schedule();const interval=setInterval(run,60000);
+  schedule();const interval=setInterval(run,600000);
   window.addEventListener('platform:storage-cleanup-needed',changed);window.addEventListener('online',resume);document.addEventListener('visibilitychange',resume);
   return()=>{stopped=true;clearTimeout(timer);clearInterval(interval);window.removeEventListener('platform:storage-cleanup-needed',changed);window.removeEventListener('online',resume);document.removeEventListener('visibilitychange',resume);};
  },[uid,enabled,endpoint]);
@@ -4074,7 +4137,7 @@ function PlatformStorageMemory({settings,theme,showNotification}){
  React.useEffect(()=>{const timer=setInterval(()=>{if(document.visibilityState==='visible')load({silent:true});},60000);return()=>clearInterval(timer);},[prefix,analyze,uid,source]);
  const connect=async()=>{if(busy)return;setBusy(true);setError('');try{const endpoint=platformStorageEndpoint(runtimeSettings).href;const opened=typeof programmerCanAccess==='function'&&programmerCanAccess()&&typeof programmerMemory!=='undefined'&&programmerMemory?.values;const result=opened?await platformStorageConnect({...programmerMemory.values,uploadBackendUrl:endpoint}):await platformStorageRequest('/connection/import',{method:'POST',settings:{...runtimeSettings,uploadBackendUrl:endpoint}});if(alive.current){setData(null);setPrefix('');setAnalyze(false);setNotice('Conexão conferida no R2. O inventário foi reiniciado para o bucket '+result.bucket+'.');}setBusy(false);await load({folder:'',references:false});}catch(e){if(alive.current){setError(e.message);setBusy(false);}}};
  const remove=async file=>{if(busy||!data)return;const current=data.connectionId;if(!await window.platformConfirm('Excluir permanentemente do Cloud R2 o arquivo '+file.key+' ('+platformStorageSize(file.size)+')? O servidor verificará novamente se ele ainda está em uso.'))return;setBusy(true);setError('');try{await platformStorageRequest('/delete',{method:'POST',settings:runtimeSettings,body:{key:file.key,etag:file.etag,connectionId:current}});setNotice('Arquivo excluído do Cloud R2. O espaço será conferido novamente.');setBusy(false);await load();}catch(e){if(alive.current){setError(e.message);setBusy(false);}}};
- const clean=async()=>{setBusy(true);setError('');try{const result=await platformStorageRequest('/cleanup',{method:'POST',settings:runtimeSettings});setNotice(result.deleted+' arquivo(s) sem referência removido(s) da fila automática.'+(result.pendingFailures?' Há '+result.pendingFailures+' operação(ões) pendente(s) para nova tentativa. Confira as conexões do R2.':''));setBusy(false);await load();}catch(e){setError(e.message);setBusy(false);}};
+ const clean=async()=>{setBusy(true);setError('');try{const result=await platformStorageRequest('/cleanup',{method:'POST',settings:runtimeSettings});setNotice(result.deferred?'A fila está preservada. As conferências completas respeitam um intervalo mínimo de 12 horas para limitar o consumo de leituras do Firebase.':result.deleted+' arquivo(s) sem referência removido(s) da fila automática.'+(result.pendingFailures?' Há '+result.pendingFailures+' operação(ões) pendente(s) para nova tentativa. Confira as conexões do R2.':''));setBusy(false);await load();}catch(e){setError(e.message);setBusy(false);}};
  const saveEndpoint=async()=>{if(busy)return;setBusy(true);setError('');try{const target=platformStorageEndpoint(runtimeSettings).href;await platformStoragePersistEndpoint(target);setEndpointUrl(target);setNotice('Endereço salvo no Firebase. Clique em Testar serviço para conferir se ele está publicado.');}catch(e){setError(e.message);}finally{setBusy(false);}};
  const testEndpoint=async()=>{if(busy)return;setBusy(true);setError('');setServiceState('');try{const health=await platformStorageRequest('/health',{settings:runtimeSettings,timeoutMs:15000});if(health.managedStorage!==true||health.apiVersion<3)throw Error('O endereço respondeu, mas não é o serviço de arquivos atualizado.');setServiceState(health.configured?'Serviço disponível. A conexão do bucket será conferida ao atualizar os arquivos.':'Serviço disponível. Agora conecte as credenciais do R2 salvas no Programador.');}catch(e){setError(e.message);}finally{setBusy(false);}};
  const cancelUpload=async pending=>{if(busy||!await window.platformConfirm('Cancelar o envio pendente de '+pending.name+' e remover suas partes temporárias do R2?'))return;setBusy(true);setError('');try{await platformStorageRequest('/uploads/'+encodeURIComponent(pending.id)+'/cancel',{method:'POST',settings:runtimeSettings});setNotice('Envio cancelado e reserva de espaço liberada.');setBusy(false);await load();}catch(e){setError(e.message);setBusy(false);}};
@@ -4082,7 +4145,7 @@ function PlatformStorageMemory({settings,theme,showNotification}){
  return <section aria-label="Memória e armazenamento Cloud R2" className="space-y-6"><header><p className="text-xs font-bold uppercase tracking-widest text-blue-400 mb-2">Ajustes · Armazenamento</p><h3 className="text-2xl font-bold text-white">Memória</h3><p className="text-sm text-slate-400 mt-2">Pastas, arquivos e uso real do Cloud R2 conectado à plataforma.</p></header>
  <div className="rounded-2xl border border-amber-600/40 bg-amber-900/10 p-5 text-sm text-amber-200"><strong>Limite da plataforma: 10 GB. Bloqueio automático em 9,9 GB.</strong><p className="mt-2">Um arquivo que ultrapasse o espaço restante é recusado antes de chegar ao R2. Envios em andamento também reservam espaço. Excluir da plataforma a última referência de um arquivo agenda sua exclusão no R2. Mensagens de texto continuam disponíveis quando os anexos estão suspensos.</p><p className="mt-2 text-xs">O limite controla os envios feitos por este serviço. Envios diretos no painel R2 ou por outro servidor precisam ser desativados para preservar esse controle. A franquia e os custos da conta também dependem de outros buckets, operações e serviços; esta barra não representa uma garantia de fatura zerada.</p></div>
  <section aria-label="Conexão do serviço de arquivos" className="rounded-2xl border border-slate-700 bg-slate-900/60 p-5 space-y-4"><div><h4 className="text-lg font-bold text-white">Conexão do Cloud R2</h4><p className="text-sm text-slate-400 mt-2">Informe o servidor que conecta a plataforma ao seu bucket e aplica o limite de espaço. Use um endereço HTTPS; as chaves privadas continuam no cofre do Programador.</p></div><label className="block text-sm text-slate-300">Endereço do serviço de arquivos<input type="url" value={endpointUrl} disabled={busy} onChange={e=>setEndpointUrl(e.target.value)} placeholder="https://servicos.seudominio.com/api/uploads" className="mt-2 block w-full rounded-xl border border-slate-600 bg-slate-950 p-3 text-white"/></label><div className="flex flex-wrap gap-3"><button type="button" disabled={busy||!endpointUrl.trim()} onClick={saveEndpoint} className="rounded-xl bg-blue-600 px-4 py-3 font-bold text-white disabled:opacity-40">Salvar endereço</button><button type="button" disabled={busy||!endpointUrl.trim()} onClick={testEndpoint} className="rounded-xl border border-slate-600 px-4 py-3 text-white disabled:opacity-40">Testar serviço</button></div>{serviceState&&<p role="status" className="text-sm text-blue-300">{serviceState}</p>}<p className="text-xs text-slate-500">O endereço público dos arquivos ou a URL S3 do bucket não são o servidor de conexão. Salvar o endereço prepara a configuração; o teste confirma a disponibilidade real do serviço.</p></section>
- <section className="rounded-xl border border-blue-700/40 bg-blue-950/20 p-4 text-sm text-blue-200" aria-label="Sincronização automática do R2"><strong>Exclusão sincronizada com o Cloud R2</strong><p className="mt-2 text-xs">Ao salvar a troca ou a remoção de um arquivo, a limpeza é agendada automaticamente. Arquivos ainda usados em outra aba, aula ou conversa são preservados. Se a conexão falhar, a tentativa fica pendente.</p><p className="mt-2 text-xs" role="status">{cleanupStatus.message}</p></section>
+ <section className="rounded-xl border border-blue-700/40 bg-blue-950/20 p-4 text-sm text-blue-200" aria-label="Sincronização automática do R2"><strong>Exclusão sincronizada com o Cloud R2</strong><p className="mt-2 text-xs">Ao salvar a troca ou a remoção de um arquivo, a limpeza é agendada automaticamente. Arquivos ainda usados em outra aba, aula ou conversa são preservados. A limpeza completa é feita em lote, com intervalo mínimo de 12 horas para preservar as leituras do Firebase. Se a conexão falhar, a tentativa fica pendente.</p><p className="mt-2 text-xs" role="status">{cleanupStatus.message}</p></section>
  <div className="flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={()=>load()} className="px-4 py-3 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50">{busy?'Conferindo…':'Atualizar do Cloud R2'}</button><button type="button" disabled={busy} onClick={connect} className="px-4 py-3 rounded-xl border border-slate-600 text-white disabled:opacity-50">Conectar R2 já cadastrado</button><button type="button" disabled={busy||!data} onClick={clean} className="px-4 py-3 rounded-xl border border-slate-600 text-white disabled:opacity-50">Conferir fila de exclusões</button></div>
  {error&&<p role="alert" className="rounded-xl border border-red-600/40 p-4 text-red-300">{error}</p>}{notice&&<p role="status" className="text-sm text-blue-300">{notice}</p>}
  {data&&<><div className="rounded-2xl border border-slate-700 bg-slate-900 p-5 space-y-4"><div className="flex flex-wrap justify-between gap-3"><div><strong className="text-white">{data.bucket}</strong><p className="text-xs text-slate-400 mt-1">Conferido em {new Date(data.syncedAt).toLocaleString('pt-BR')} · atualização a cada 60 segundos com esta aba aberta</p></div><strong className={data.blocked?'text-red-300':'text-emerald-300'}>{data.blocked?'Novos envios bloqueados':'Espaço disponível'}</strong></div><div className="flex justify-between text-sm text-slate-300"><span>{platformStorageSize(data.usedBytes)} usados</span><span>10 GB</span></div><progress aria-label="Armazenamento utilizado no Cloud R2, incluindo reservas" max={data.capacityBytes} value={Math.min(total,data.capacityBytes)} className={'w-full h-4 '+(data.blocked?'accent-red-500':'accent-blue-500')}/><div className="grid sm:grid-cols-3 gap-3 text-xs text-slate-400"><span>{data.fileCount} arquivos</span><span>{platformStorageSize(data.reservedBytes)} reservados · {platformStorageSize(data.incompleteBytes)} em partes incompletas</span><span>{platformStorageSize(data.availableBytes)} até o bloqueio</span></div></div>
@@ -18468,6 +18531,7 @@ function AdminWallpaper({appearance,mini=false,onMediaError}){
 function AdminAppearanceSettings({value,onSave,onPreview,busy,onBusyChange,upload,controlsRef}){
  const [draft,setDraft]=useState(()=>adminAppearanceNormalize(value)),[target,setTarget]=useState('all'),[urlInput,setUrlInput]=useState(''),[kindInput,setKindInput]=useState('image'),[error,setError]=useState(''),[status,setStatus]=useState(''),[mediaError,setMediaError]=useState(false),[files,setFiles]=useState({});
  const fileRef=useRef(null),filesRef=useRef({}),running=useRef(false),alive=useRef(true),savedRef=useRef(JSON.stringify(adminAppearanceNormalize(value)));
+ useEffect(()=>{const waiting=event=>{if(alive.current&&running.current&&event.detail?.uid===auth?.currentUser?.uid)setStatus(event.detail.message);};window.addEventListener('platform:storage-wait',waiting);return()=>window.removeEventListener('platform:storage-wait',waiting);},[]);
  const pages=useMemo(adminAppearancePages,[]),isGlobal=target==='all',page=draft.pages[target]||{},resolved=adminAppearanceResolve(draft,isGlobal?'__global__':target,true);
  const backgroundInherited=!isGlobal&&page.background===undefined,transparencyInherited=!isGlobal&&page.transparency===undefined;
  const urlChanged=!backgroundInherited&&!!urlInput.trim()&&(urlInput.trim()!==resolved.background.url||kindInput!==resolved.background.kind);
@@ -27852,67 +27916,3 @@ function createSiteCursosIdentityClient(sdk) {
       const config = await getDocFromServer(configRef); assertUser(user.uid); ensureReady(config);
       return { ready: true, report: null };
     }
-    throw error('Operação de cadastro inválida.', 'platform/invalid-identity-action');
-  };
-}
-
-let platformSiteCursosIdentityClient;
-const platformUsesSiteCursosIdentity = (settings=window.platformPublicSettings||{}) => firebaseConfig.projectId==='site-cursos-a8ee1'&&!settings.identityBackendUrl&&!settings.paymentBackendUrl&&!window.PLATFORM_IDENTITY_BACKEND_URL;
-async function platformIdentityRequest(payload,settings=window.platformPublicSettings||{},expectedUid){
- const current=platformAssertCurrentAccount(expectedUid);let url;
- if(platformUsesSiteCursosIdentity(settings)){
-  if(!platformSiteCursosIdentityClient)platformSiteCursosIdentityClient=createSiteCursosIdentityClient({db,doc,getDocFromServer,runTransaction:inactivityTransaction,serverTimestamp,assertUser:platformAssertCurrentAccount,cpfValid:platformCpfValid});
-  return platformSiteCursosIdentityClient(payload,current);
- }
- try{
-  const configured=settings.identityBackendUrl||window.PLATFORM_IDENTITY_BACKEND_URL;
-  url=configured?new URL(configured,location.href):settings.paymentBackendUrl?new URL('./identity',new URL(settings.paymentBackendUrl,location.href)):new URL('./api/identity',location.href);
- }catch(_){throw Error('O endereço do serviço interno de segurança é inválido.');}
- if(url.protocol!=='https:'&&!(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname)))throw Error('Configure HTTPS para o serviço interno de segurança.');
- const token=await current.getIdToken(),controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),30000);
- try{
-  const response=await fetch(url.href,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal,cache:'no-store'});
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw Object.assign(Error(data.error||(response.status===404?'O serviço interno de segurança precisa ser publicado. Solicite a configuração ao administrador.':'Não foi possível validar a segurança desta conta.')),{code:data.code||'platform/identity-error',status:response.status});
-  platformAssertCurrentAccount(current.uid);return data;
- }catch(error){if(error.name==='AbortError')throw Error('A verificação de segurança demorou. Confira sua internet e tente novamente.');throw error;}
- finally{clearTimeout(timeout);}
-}
-async function platformAssertPurchaseIdentity(expectedUid){
- const current=platformAssertCurrentAccount(expectedUid);
- const data=await platformIdentityRequest({action:'check'},undefined,current.uid);
- if(data.uid!==current.uid||!platformCpfValid(data.cpfNormalized))throw Error('O CPF não está vinculado ao seu perfil. Complete seu cadastro antes de comprar.');
- return data;
-}
-async function platformSaveOwnProfile(user,form){
- platformAssertCurrentAccount(user.uid);
- if(!platformCpfValid(form.cpf))throw Error('Informe um CPF válido com 11 dígitos.');
- const fields=['name','cpf','rg','phone','birthDate','zipCode','address','number','neighborhood','city','state','bio','photoBase64'];
- const profile=Object.fromEntries(fields.filter(key=>form[key]!==undefined).map(key=>[key,form[key]]));
- return platformIdentityRequest({action:'save-profile',profile},undefined,user.uid);
-}
-function PlatformStudentIdentityGate({user,children}){
- const [state,setState]=React.useState({loading:true,active:false,error:'',profile:{}}),[retry,setRetry]=React.useState(0);
- React.useEffect(()=>{let alive=true;setState(old=>({...old,loading:true,error:''}));platformIdentityRequest({action:'profile-status'},undefined,user.uid).then(data=>{if(alive)setState({loading:false,active:data.active===true,error:'',profile:data.profile||{}});}).catch(error=>{if(alive)setState({loading:false,active:false,error:error.message,profile:{}});});return()=>{alive=false;};},[user.uid,retry]);
- if(state.active)return children;
- if(!state.loading&&!state.error)return <CompleteRegistrationModal user={user} initialProfile={state.profile} onSuccess={()=>setRetry(value=>value+1)}/>;
- return <main className="min-h-screen bg-black text-white grid place-items-center p-6"><section className="max-w-lg rounded-2xl border border-slate-700 p-7 bg-slate-950"><h1 className="font-bold text-xl">Segurança do seu cadastro</h1><p role={state.error?'alert':'status'} className="mt-4 text-sm leading-relaxed text-slate-300">{state.loading?'Verificando o CPF vinculado à sua conta…':state.error}</p>{state.error&&<button type="button" className="mt-5 rounded-xl bg-blue-600 px-4 py-3 font-bold" onClick={()=>setRetry(value=>value+1)}>Tentar novamente</button>}<button type="button" className="block mt-5 text-slate-400 underline" onClick={()=>signOut(auth)}>Sair da conta</button></section></main>;
-}
-function PlatformIdentityAdminCard({settings,showNotification}){
- const [state,setState]=React.useState({loading:true,ready:false,error:'',report:null}),[busy,setBusy]=React.useState(false);
- const refresh=async()=>{try{const data=await platformIdentityRequest({action:'security-status'},settings);setState({loading:false,ready:data.ready,error:'',report:data.report||null});}catch(error){setState({loading:false,ready:false,error:error.message,report:null});}};
- React.useEffect(()=>{refresh();},[settings?.identityBackendUrl,settings?.paymentBackendUrl]);
- const initialize=async()=>{if(busy)return;setBusy(true);try{const data=await platformIdentityRequest({action:'initialize'},settings);setState({loading:false,ready:data.ready,error:'',report:data.report});showNotification?.(platformUsesSiteCursosIdentity(settings)?'As regras de CPF e celular exclusivos estão ativas no Firebase.':'Índice de CPF atualizado. Cadastros com conflitos permanecem bloqueados.','success');}catch(error){setState(old=>({...old,error:error.message}));showNotification?.(error.message,'error');}finally{setBusy(false);}};
- return <section className="mt-5 rounded-2xl border border-slate-700 bg-[#090c12] p-6 text-white" aria-label="Segurança de CPF e compras">
-  <h3 className="text-lg font-bold">Segurança de CPF e compras</h3><p className="text-sm text-slate-400 mt-2">Cada CPF fica vinculado a uma única conta. Compras, matrículas e resgates usam o perfil da pessoa conectada, com verificação interna no servidor.</p>
-  <p className="text-sm mt-4 text-blue-200" role="status">{state.loading?'Verificando configuração…':state.ready?'Proteção interna preparada.': 'Inicialize os CPFs existentes antes de liberar novos cadastros e compras.'}</p>
-  {state.error&&<p role="alert" className="mt-3 text-sm text-red-300">{state.error}</p>}
-  {state.report&&<div className="mt-4 text-sm text-slate-300"><p>{state.report.indexed||0} contas vinculadas · {state.report.conflictCount||0} CPFs em conflito · {state.report.invalidCount||0} CPFs inválidos</p>{(state.report.conflicts||[]).length>0&&<details className="mt-3"><summary className="cursor-pointer text-amber-200">Ver conflitos que exigem revisão</summary><ul className="mt-2 space-y-2">{state.report.conflicts.map((item,index)=><li key={index}>{item.cpfMasked}: {(item.accounts||[]).map(account=>account.name||account.uid).join(' / ')}</li>)}</ul><p className="mt-3 text-xs">Revise os cadastros envolvidos na área de alunos e execute a atualização novamente. Nenhuma conta será apagada ou terá compras transferidas.</p></details>}</div>}
-  <button type="button" onClick={initialize} disabled={busy||state.loading} className="mt-5 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold disabled:opacity-50">{busy?'Verificando os cadastros…':platformUsesSiteCursosIdentity(settings)?'Conferir cadastro no Firebase':state.ready?'Atualizar e revisar CPFs existentes':'Inicializar proteção de CPF'}</button>
-  <p className="text-xs text-slate-400 mt-3">Acesse com e-mail e senha ou Google. O Site Cursos não exige código de autenticador nem confirmação por SMS. O CPF e o celular fazem parte do cadastro da plataforma.</p>
- </section>;
-}
-
-</script>
-</body>
-</html>
