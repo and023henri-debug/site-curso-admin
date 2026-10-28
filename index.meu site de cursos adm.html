@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- ADMIN v27: fundos com resolução original, transparência sem desfoque e limpeza automática de mídia sem referência no Cloud R2. -->
 <!-- ADMIN LOGIN v26 — 27/10/2026: administrador por e-mail e senha; arquivo local abre diretamente o painel online. -->
 <!-- ADMIN APPEARANCE v25 — 27/10/2026: transparência e fundos gerais/por aba em Ajustes; menu v24 e conteúdo das telas preservados. -->
 <!-- ADMIN MENU v24 — 27/10/2026: menu lateral preto com seleção móvel; contadores apenas no dashboard, sem animar valores financeiros. -->
@@ -3947,28 +3948,100 @@ async function platformManagedUpload(file,folder,settings,signal){
   throw error;
  }
 }
-function platformStorageHasReferences(value){
- const base=String(window.platformPublicSettings?.r2PublicDomain||'').replace(/\/$/,'')+'/';if(base==='/')return false;
- if(typeof value==='string')return value.includes('https://');
- if(Array.isArray(value))return value.some(platformStorageHasReferences);
- return !!value&&typeof value==='object'&&Object.values(value).some(platformStorageHasReferences);
+// O documento antigo entra na fila antes de gravar. Só o servidor remove os
+// objetos, após conferir novamente todas as referências, inclusive de outras abas.
+function platformStorageUrls(value,result=new Set()){
+ if(!value||typeof value!=='object'&&typeof value!=='string')return result;
+ if(typeof value==='string'){for(const match of value.matchAll(/https:\/\/[^\s<>"'\\]+/g))result.add(match[0].replace(/[);,\]}]+$/g,''));}
+ else if(Array.isArray(value)){for(const item of value)platformStorageUrls(item,result);}
+ else if(value.deleted!==true&&value.deletedForAll!==true){for(const item of Object.values(value))platformStorageUrls(item,result);}
+ return result;
 }
+function platformStorageHasReferences(value){return platformStorageUrls(value).size>0;}
+const platformStoragePendingKey=uid=>'am-r2-detached-media-v1:'+uid;
+function platformStoragePending(uid){try{const value=JSON.parse(localStorage.getItem(platformStoragePendingKey(uid))||'[]');return Array.isArray(value)?value.filter(url=>typeof url==='string'&&url.length<=4000&&url.startsWith('https://')):[];}catch(_){return [];}}
+function platformStorageRemember(uid,urls){try{localStorage.setItem(platformStoragePendingKey(uid),JSON.stringify([...new Set([...platformStoragePending(uid),...urls])]));return true;}catch(_){return false;}}
+function platformStorageAcknowledge(uid,urls){try{const done=new Set(urls),remaining=platformStoragePending(uid).filter(url=>!done.has(url));if(remaining.length)localStorage.setItem(platformStoragePendingKey(uid),JSON.stringify(remaining));else localStorage.removeItem(platformStoragePendingKey(uid));}catch(_){};}
+let platformStorageCleanupStatus={state:'idle',message:'A limpeza automática confere os arquivos depois de salvar as alterações.'};
+function platformStorageCleanupNotify(detail){platformStorageCleanupStatus=detail;window.dispatchEvent(new CustomEvent('platform:storage-cleanup-status',{detail}));}
 async function platformStorageBeforeWrite(ref){
- if(!ref?.path||/^(face[A-Z]|storage[A-Z]|programmerConfig)/.test(ref.path)||/^config\/(general_settings|general_settings_public|youtube_upload|chat_upload_policy)$/.test(ref.path))return;
- let old;try{old=await getDocFromServer(ref);}catch(error){if(error.code==='permission-denied')return;throw error;}
- if(old.exists()&&platformStorageHasReferences(old.data()))await platformStorageRequest('/before-write',{method:'POST',body:{document:ref.path}});
+ const uid=auth?.currentUser?.uid;
+ if(!uid||!ref?.path||/^(face[A-Z]|storage[A-Z]|programmerConfig)/.test(ref.path))return null;
+ let old;try{old=await getDocFromServer(ref);}catch(error){if(error.code==='permission-denied')return null;throw error;}
+ if(auth?.currentUser?.uid!==uid)throw Error('A conta mudou. Entre novamente antes de salvar.');
+ if(!old.exists()||!platformStorageHasReferences(old.data()))return null;
+ const result=await platformStorageRequest('/before-write',{method:'POST',body:{document:ref.path}});
+ return result.queued?{ref,uid,urls:[...platformStorageUrls(old.data())]}:null;
+}
+async function platformStorageAfterWrite(contexts){
+ const current=contexts.filter(Boolean),uid=auth?.currentUser?.uid;
+ if(!uid||!current.some(item=>item.uid===uid))return;
+ const removed=new Set();
+ for(const item of current){
+  if(item.uid!==uid)continue;
+  let inUse=new Set();try{const saved=await getDocFromServer(item.ref);if(saved.exists())inUse=platformStorageUrls(saved.data());}catch(_){}
+  for(const url of item.urls)if(!inUse.has(url))removed.add(url);
+ }
+ // Uma confirmação após a gravação também cobre gravações demoradas. Se a aba
+ // fechar, os trabalhos anteriores continuam no servidor e os links pendentes
+ // desta conta são retomados na próxima abertura do painel.
+ const urls=[...removed];platformStorageRemember(uid,urls);
+ const acknowledged=[];let failed=false;
+ for(const url of urls){
+  if(auth?.currentUser?.uid!==uid)break;
+  try{await platformStorageRequest('/queue-url',{method:'POST',body:{url}});acknowledged.push(url);}catch(_){failed=true;}
+ }
+ platformStorageAcknowledge(uid,acknowledged);
+ platformStorageCleanupNotify({uid,state:'pending',message:failed?'Alteração salva. A sincronização com o R2 está pendente e será tentada novamente.':'Alteração salva. A limpeza automática do R2 está agendada.'});
+ window.dispatchEvent(new CustomEvent('platform:storage-cleanup-needed',{detail:{uid}}));
 }
 async function platformStorageWrite(action,ref,...args){
- await platformStorageBeforeWrite(ref);
- return ({setDoc:platformRawSetDoc,updateDoc:platformRawUpdateDoc,deleteDoc:platformRawDeleteDoc})[action](ref,...args);
+ const context=await platformStorageBeforeWrite(ref);
+ const result=await ({setDoc:platformRawSetDoc,updateDoc:platformRawUpdateDoc,deleteDoc:platformRawDeleteDoc})[action](ref,...args);
+ await platformStorageAfterWrite([context]);return result;
 }
 const setDoc=(ref,...args)=>platformStorageWrite('setDoc',ref,...args);
 const updateDoc=(ref,...args)=>platformStorageWrite('updateDoc',ref,...args);
 const deleteDoc=(ref,...args)=>platformStorageWrite('deleteDoc',ref,...args);
 function platformStorageBatch(batch){
  const refs=new globalThis.Map();let proxy;
- proxy=new Proxy(batch,{get(target,key){if(['set','update','delete'].includes(key))return(ref,...args)=>{if(ref?.path)refs.set(ref.path,ref);target[key](ref,...args);return proxy;};if(key==='commit')return async()=>{for(const ref of refs.values())await platformStorageBeforeWrite(ref);return target.commit();};const value=target[key];return typeof value==='function'?value.bind(target):value;}});return proxy;
+ proxy=new Proxy(batch,{get(target,key){if(['set','update','delete'].includes(key))return(ref,...args)=>{if(ref?.path)refs.set(ref.path,ref);target[key](ref,...args);return proxy;};if(key==='commit')return async()=>{const contexts=[];for(const ref of refs.values())contexts.push(await platformStorageBeforeWrite(ref));const result=await target.commit();await platformStorageAfterWrite(contexts);return result;};const value=target[key];return typeof value==='function'?value.bind(target):value;}});return proxy;
 }
+function PlatformStorageAutoCleanup({uid,enabled,settings}){
+ const endpoint=settings?.uploadBackendUrl||settings?.r2UploadBackendUrl||'';
+ React.useEffect(()=>{
+  if(!enabled||!uid||!endpoint)return;
+  let stopped=false,running=false,timer=null,forbidden=false;
+  const run=async()=>{
+   if(stopped||running||forbidden||auth?.currentUser?.uid!==uid||document.visibilityState==='hidden')return;
+   running=true;let failed=false;
+   try{
+    const acknowledged=[];
+    for(const url of platformStoragePending(uid)){
+     if(stopped||auth?.currentUser?.uid!==uid)return;
+     try{await platformStorageRequest('/queue-url',{method:'POST',body:{url},settings});acknowledged.push(url);}catch(error){if(error.status===401||error.status===403)throw error;failed=true;}
+    }
+    platformStorageAcknowledge(uid,acknowledged);
+    const result=await platformStorageRequest('/cleanup',{method:'POST',settings});
+    if(stopped||auth?.currentUser?.uid!==uid)return;
+    const pending=failed||result.pendingFailures||platformStoragePending(uid).length||acknowledged.length;
+    platformStorageCleanupNotify({uid,state:pending?'pending':'synced',deleted:Number(result.deleted)||0,message:pending?'Há arquivos aguardando sincronização. O painel fará uma nova tentativa automaticamente.':'Sincronização conferida. '+(Number(result.deleted)||0)+' arquivo(s) sem uso removido(s) do R2. Arquivos ainda utilizados foram preservados.'});
+    if(acknowledged.length)schedule();
+   }catch(error){
+    if(error.status===401||error.status===403)forbidden=true;
+    if(!stopped&&auth?.currentUser?.uid===uid)platformStorageCleanupNotify({uid,state:'pending',message:'A limpeza do R2 está pendente. Confira a conexão em Memória; o painel tentará novamente quando ela estiver disponível.'});
+   }finally{running=false;}
+  };
+  const schedule=()=>{clearTimeout(timer);timer=setTimeout(run,12000);};
+  const changed=event=>{if(event.detail?.uid===uid)schedule();};
+  const resume=()=>{if(document.visibilityState==='visible')schedule();};
+  schedule();const interval=setInterval(run,60000);
+  window.addEventListener('platform:storage-cleanup-needed',changed);window.addEventListener('online',resume);document.addEventListener('visibilitychange',resume);
+  return()=>{stopped=true;clearTimeout(timer);clearInterval(interval);window.removeEventListener('platform:storage-cleanup-needed',changed);window.removeEventListener('online',resume);document.removeEventListener('visibilitychange',resume);};
+ },[uid,enabled,endpoint]);
+ return null;
+}
+
 async function platformStorageFirestore(){
  const sdk=await import('https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js');
  return {...sdk,setDoc,updateDoc,deleteDoc,writeBatch:db=>platformStorageBatch(sdk.writeBatch(db))};
@@ -3988,6 +4061,8 @@ async function platformStoragePersistEndpoint(endpoint){
 const platformStorageSize=bytes=>{const value=Number(bytes)||0;return value>=1e9?(value/1e9).toLocaleString('pt-BR',{maximumFractionDigits:3})+' GB':value>=1e6?(value/1e6).toLocaleString('pt-BR',{maximumFractionDigits:2})+' MB':value>=1000?(value/1000).toLocaleString('pt-BR',{maximumFractionDigits:1})+' KB':value+' bytes';};
 function PlatformStorageMemory({settings,theme,showNotification}){
  const uid=auth?.currentUser?.uid,[data,setData]=React.useState(null),[prefix,setPrefix]=React.useState(''),[busy,setBusy]=React.useState(false),[error,setError]=React.useState(''),[notice,setNotice]=React.useState(''),[analyze,setAnalyze]=React.useState(false),[unused,setUnused]=React.useState(false),[endpointUrl,setEndpointUrl]=React.useState(settings?.uploadBackendUrl||settings?.r2UploadBackendUrl||''),[serviceState,setServiceState]=React.useState('');
+ const [cleanupStatus,setCleanupStatus]=React.useState(platformStorageCleanupStatus);
+ React.useEffect(()=>{const changed=event=>{if(!event.detail?.uid||event.detail.uid===uid)setCleanupStatus(event.detail);};window.addEventListener('platform:storage-cleanup-status',changed);return()=>window.removeEventListener('platform:storage-cleanup-status',changed);},[uid]);
  const epoch=React.useRef(0),running=React.useRef(false),alive=React.useRef(true);
  const runtimeSettings={...settings,uploadBackendUrl:endpointUrl.trim()};
  const source=[settings?.uploadBackendUrl,settings?.r2AccountId,settings?.r2BucketName,settings?.r2PublicDomain].join('|');
@@ -4007,6 +4082,7 @@ function PlatformStorageMemory({settings,theme,showNotification}){
  return <section aria-label="Memória e armazenamento Cloud R2" className="space-y-6"><header><p className="text-xs font-bold uppercase tracking-widest text-blue-400 mb-2">Ajustes · Armazenamento</p><h3 className="text-2xl font-bold text-white">Memória</h3><p className="text-sm text-slate-400 mt-2">Pastas, arquivos e uso real do Cloud R2 conectado à plataforma.</p></header>
  <div className="rounded-2xl border border-amber-600/40 bg-amber-900/10 p-5 text-sm text-amber-200"><strong>Limite da plataforma: 10 GB. Bloqueio automático em 9,9 GB.</strong><p className="mt-2">Um arquivo que ultrapasse o espaço restante é recusado antes de chegar ao R2. Envios em andamento também reservam espaço. Excluir da plataforma a última referência de um arquivo agenda sua exclusão no R2. Mensagens de texto continuam disponíveis quando os anexos estão suspensos.</p><p className="mt-2 text-xs">O limite controla os envios feitos por este serviço. Envios diretos no painel R2 ou por outro servidor precisam ser desativados para preservar esse controle. A franquia e os custos da conta também dependem de outros buckets, operações e serviços; esta barra não representa uma garantia de fatura zerada.</p></div>
  <section aria-label="Conexão do serviço de arquivos" className="rounded-2xl border border-slate-700 bg-slate-900/60 p-5 space-y-4"><div><h4 className="text-lg font-bold text-white">Conexão do Cloud R2</h4><p className="text-sm text-slate-400 mt-2">Informe o servidor que conecta a plataforma ao seu bucket e aplica o limite de espaço. Use um endereço HTTPS; as chaves privadas continuam no cofre do Programador.</p></div><label className="block text-sm text-slate-300">Endereço do serviço de arquivos<input type="url" value={endpointUrl} disabled={busy} onChange={e=>setEndpointUrl(e.target.value)} placeholder="https://servicos.seudominio.com/api/uploads" className="mt-2 block w-full rounded-xl border border-slate-600 bg-slate-950 p-3 text-white"/></label><div className="flex flex-wrap gap-3"><button type="button" disabled={busy||!endpointUrl.trim()} onClick={saveEndpoint} className="rounded-xl bg-blue-600 px-4 py-3 font-bold text-white disabled:opacity-40">Salvar endereço</button><button type="button" disabled={busy||!endpointUrl.trim()} onClick={testEndpoint} className="rounded-xl border border-slate-600 px-4 py-3 text-white disabled:opacity-40">Testar serviço</button></div>{serviceState&&<p role="status" className="text-sm text-blue-300">{serviceState}</p>}<p className="text-xs text-slate-500">O endereço público dos arquivos ou a URL S3 do bucket não são o servidor de conexão. Salvar o endereço prepara a configuração; o teste confirma a disponibilidade real do serviço.</p></section>
+ <section className="rounded-xl border border-blue-700/40 bg-blue-950/20 p-4 text-sm text-blue-200" aria-label="Sincronização automática do R2"><strong>Exclusão sincronizada com o Cloud R2</strong><p className="mt-2 text-xs">Ao salvar a troca ou a remoção de um arquivo, a limpeza é agendada automaticamente. Arquivos ainda usados em outra aba, aula ou conversa são preservados. Se a conexão falhar, a tentativa fica pendente.</p><p className="mt-2 text-xs" role="status">{cleanupStatus.message}</p></section>
  <div className="flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={()=>load()} className="px-4 py-3 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50">{busy?'Conferindo…':'Atualizar do Cloud R2'}</button><button type="button" disabled={busy} onClick={connect} className="px-4 py-3 rounded-xl border border-slate-600 text-white disabled:opacity-50">Conectar R2 já cadastrado</button><button type="button" disabled={busy||!data} onClick={clean} className="px-4 py-3 rounded-xl border border-slate-600 text-white disabled:opacity-50">Conferir fila de exclusões</button></div>
  {error&&<p role="alert" className="rounded-xl border border-red-600/40 p-4 text-red-300">{error}</p>}{notice&&<p role="status" className="text-sm text-blue-300">{notice}</p>}
  {data&&<><div className="rounded-2xl border border-slate-700 bg-slate-900 p-5 space-y-4"><div className="flex flex-wrap justify-between gap-3"><div><strong className="text-white">{data.bucket}</strong><p className="text-xs text-slate-400 mt-1">Conferido em {new Date(data.syncedAt).toLocaleString('pt-BR')} · atualização a cada 60 segundos com esta aba aberta</p></div><strong className={data.blocked?'text-red-300':'text-emerald-300'}>{data.blocked?'Novos envios bloqueados':'Espaço disponível'}</strong></div><div className="flex justify-between text-sm text-slate-300"><span>{platformStorageSize(data.usedBytes)} usados</span><span>10 GB</span></div><progress aria-label="Armazenamento utilizado no Cloud R2, incluindo reservas" max={data.capacityBytes} value={Math.min(total,data.capacityBytes)} className={'w-full h-4 '+(data.blocked?'accent-red-500':'accent-blue-500')}/><div className="grid sm:grid-cols-3 gap-3 text-xs text-slate-400"><span>{data.fileCount} arquivos</span><span>{platformStorageSize(data.reservedBytes)} reservados · {platformStorageSize(data.incompleteBytes)} em partes incompletas</span><span>{platformStorageSize(data.availableBytes)} até o bloqueio</span></div></div>
@@ -18374,6 +18450,7 @@ function adminAppearanceResolve(value,id,allowBlob=false){
 function adminAppearanceVariables(resolved){const alpha=(1-resolved.transparency/100).toFixed(3);return {'--ad-glass-alpha':alpha,'--ad-glass-soft':Math.min(1,Number(alpha)+.12).toFixed(3)};}
 function AdminWallpaper({appearance,mini=false,onMediaError}){
  const videoRef=useRef(null),[paused,setPaused]=useState(()=>!!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches),[failed,setFailed]=useState(false);
+ const [imageSize,setImageSize]=useState(null);
  const media=appearance.background;
  useEffect(()=>{
   setFailed(false);
@@ -18386,9 +18463,8 @@ function AdminWallpaper({appearance,mini=false,onMediaError}){
   sync();document.addEventListener('visibilitychange',sync);return()=>{element.pause();document.removeEventListener('visibilitychange',sync);};
  },[paused,media.url,failed]);
  const fail=()=>{setFailed(true);onMediaError?.();};
- return <><div className={'ad-wallpaper'+(mini?' ad-wallpaper-mini':'')} aria-hidden="true">{!failed&&media.kind==='image'&&media.url&&<img src={media.url} alt="" onError={fail}/>} {!failed&&media.kind==='video'&&media.url&&<video ref={videoRef} src={media.url} muted loop playsInline preload="metadata" onError={fail}/>}<div className="ad-wallpaper-shade"/></div>{!mini&&!failed&&media.kind==='video'&&<button className="ad-wallpaper-action" type="button" onClick={()=>setPaused(value=>!value)} aria-label={paused?'Reproduzir vídeo de fundo':'Pausar vídeo de fundo'}><AdminSectorIcon name={paused?'PlayFill':'PauseFill'} className="ad-icon"/>{paused?'Reproduzir fundo':'Pausar fundo'}</button>}</>;
+ return <><div className={'ad-wallpaper'+(mini?' ad-wallpaper-mini':'')} aria-hidden="true">{!failed&&media.kind==='image'&&media.url&&<img src={media.url} alt="" decoding="async" loading="eager" style={imageSize?{maxWidth:imageSize.width+'px',maxHeight:imageSize.height+'px'}:undefined} onLoad={event=>{const image=event.currentTarget;setImageSize({width:image.naturalWidth,height:image.naturalHeight});}} onError={fail}/>} {!failed&&media.kind==='video'&&media.url&&<video ref={videoRef} src={media.url} muted loop playsInline preload="metadata" onError={fail}/>}<div className="ad-wallpaper-shade"/></div>{!mini&&!failed&&media.kind==='video'&&<button className="ad-wallpaper-action" type="button" onClick={()=>setPaused(value=>!value)} aria-label={paused?'Reproduzir vídeo de fundo':'Pausar vídeo de fundo'}><AdminSectorIcon name={paused?'PlayFill':'PauseFill'} className="ad-icon"/>{paused?'Reproduzir fundo':'Pausar fundo'}</button>}</>;
 }
-
 function AdminAppearanceSettings({value,onSave,onPreview,busy,onBusyChange,upload,controlsRef}){
  const [draft,setDraft]=useState(()=>adminAppearanceNormalize(value)),[target,setTarget]=useState('all'),[urlInput,setUrlInput]=useState(''),[kindInput,setKindInput]=useState('image'),[error,setError]=useState(''),[status,setStatus]=useState(''),[mediaError,setMediaError]=useState(false),[files,setFiles]=useState({});
  const fileRef=useRef(null),filesRef=useRef({}),running=useRef(false),alive=useRef(true),savedRef=useRef(JSON.stringify(adminAppearanceNormalize(value)));
@@ -18420,7 +18496,7 @@ function AdminAppearanceSettings({value,onSave,onPreview,busy,onBusyChange,uploa
   const file=event.target.files?.[0];event.target.value='';if(!file)return;
   const kind=/^image\/(jpeg|png|webp|avif)$/.test(file.type)?'image':/^video\/(mp4|webm)$/.test(file.type)?'video':'';
   if(!kind)return setError('Escolha uma imagem JPG, PNG, WebP ou AVIF, ou um vídeo MP4/WebM.');
-  if(file.size>ADMIN_BACKGROUND_UPLOAD_LIMIT)return setError('O envio direto aceita até 4 MB. Para um vídeo maior, informe o link HTTPS do arquivo já hospedado.');
+  if(file.size>ADMIN_BACKGROUND_UPLOAD_LIMIT)return setError('O envio direto aceita até 4 MB, sem reduzir a qualidade. Para uma imagem ou vídeo maior, informe o link HTTPS do arquivo original já hospedado.');
   forgetFile(target);const url=URL.createObjectURL(file),next={...filesRef.current,[target]:{file,url,kind}};filesRef.current=next;setFiles(next);
   setUrlInput('');setKindInput(kind);edit(replaceEntry(draft,target,{background:{kind,url,name:file.name,size:file.size}}));
  };
@@ -18451,9 +18527,9 @@ function AdminAppearanceSettings({value,onSave,onPreview,busy,onBusyChange,uploa
  const applyEverywhere=()=>{for(const [key,item] of Object.entries(filesRef.current))if(key!=='all')URL.revokeObjectURL(item.url);filesRef.current=filesRef.current.all?{all:filesRef.current.all}:{};setFiles(filesRef.current);edit({...draft,pages:{}});setStatus('O fundo e a transparência gerais serão usados em todas as abas ao salvar.');};
  const previewLabel=isGlobal?'Fundo geral':pages.find(item=>item.id===target)?.label||'Esta aba';
  const differentPages=Object.keys(draft.pages).length;
- return <section className="ap-settings" aria-label="Aparência do painel"><div className="ap-intro"><div><p className="ad-kicker">Seu painel, do seu jeito</p><h2>Aparência do painel</h2><p>Escolha o fundo e deixe o menu e os painéis com efeito de vidro. O texto e os botões continuam nítidos.</p></div><label className="ap-toggle"><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={event=>edit({...draft,enabled:event.target.checked})}/><span>Efeito translúcido</span></label></div>
+ return <section className="ap-settings" aria-label="Aparência do painel"><div className="ap-intro"><div><p className="ad-kicker">Seu painel, do seu jeito</p><h2>Aparência do painel</h2><p>Escolha o fundo e deixe o menu e os painéis com efeito de vidro. A imagem, o texto e os botões continuam nítidos.</p></div><label className="ap-toggle"><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={event=>edit({...draft,enabled:event.target.checked})}/><span>Efeito translúcido</span></label></div>
   <div className="ap-layout"><div className="ap-controls"><section className="ap-panel"><div className="ap-panel-heading"><span className="ap-step">01</span><div><h3>Onde aplicar</h3><p>Use um visual geral ou personalize cada aba.</p></div></div><label className="ap-field">Configurar<select value={target} disabled={busy} onChange={event=>setTarget(event.target.value)}><option value="all">Todas as abas · visual geral</option>{[...new Set(pages.map(item=>item.group))].map(group=><optgroup key={group} label={group}>{pages.filter(item=>item.group===group).map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label><div className="ap-scope-note"><AdminSectorIcon name={isGlobal?'Layout':'Settings'} className="ad-icon"/><p>{isGlobal?'O visual geral vale para todas as abas que usam o padrão.':'As escolhas abaixo alteram somente '+previewLabel+'.'}</p></div>{isGlobal?<div className="ap-all-actions"><button type="button" disabled={busy||differentPages===0} className="ap-button ap-secondary" onClick={applyEverywhere}>Usar este visual em todas as abas</button><small>{differentPages?differentPages+' aba(s) têm ajustes próprios. O botão substitui esses ajustes ao salvar.':'Todas as abas estão usando o visual geral.'}</small></div>:<><label className="ap-check"><input type="checkbox" checked={backgroundInherited} disabled={busy} onChange={event=>inheritBackground(event.target.checked)}/>Usar o fundo geral nesta aba</label><label className="ap-check"><input type="checkbox" checked={transparencyInherited} disabled={busy} onChange={event=>edit(replaceEntry(draft,target,{transparency:event.target.checked?undefined:draft.transparency}))}/>Usar a transparência geral nesta aba</label></>}</section>
-   <section className="ap-panel"><div className="ap-panel-heading"><span className="ap-step">02</span><div><h3>Imagem ou vídeo de fundo</h3><p>{backgroundInherited?'Esta aba acompanha o fundo geral.':'Escolha um arquivo ou cole um endereço.'}</p></div></div><fieldset disabled={busy||backgroundInherited} className="ap-media-fields"><input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/avif,video/mp4,video/webm" className="ap-file-input" aria-label="Escolher imagem ou vídeo de fundo" onChange={chooseFile}/><button type="button" className="ap-upload" onClick={()=>fileRef.current?.click()}><AdminSectorIcon name="UploadCloud" className="ad-icon"/><strong>Escolher imagem ou vídeo</strong><span>JPG, PNG, WebP, AVIF, MP4 ou WebM · até 4 MB</span></button>{resolved.background.kind!=='none'&&<div className="ap-selected-media"><AdminSectorIcon name={resolved.background.kind==='video'?'Video':'Image'} className="ad-icon"/><div><strong>{resolved.background.name||'Fundo selecionado'}</strong><small>{files[target]?'Arquivo pronto para enviar ao salvar':resolved.background.kind==='video'?'Vídeo sem som, em repetição':'Imagem de fundo'}</small></div><button type="button" className="ap-remove" onClick={()=>{forgetFile(target);setUrlInput('');edit(replaceEntry(draft,target,{background:{kind:'none',url:'',name:'',size:0}}));}}>Remover</button></div>}<div className="ap-divider"><span>ou use um endereço</span></div><div className="ap-url-row"><label className="ap-field">Tipo<select value={kindInput} onChange={event=>setKindInput(event.target.value)}><option value="image">Imagem</option><option value="video">Vídeo</option></select></label><label className="ap-field ap-url-field">Endereço do fundo<input type="url" value={urlInput} placeholder="https://…" onChange={event=>setUrlInput(event.target.value)}/></label></div><button className="ap-button ap-secondary" type="button" disabled={!urlInput.trim()} onClick={()=>{try{edit(applyUrl());}catch(failure){setError(failure.message);}}}>Pré-visualizar endereço</button><p className="ap-help">Use o link direto de um arquivo. Vídeos maiores podem ser usados por endereço. Os arquivos enviados podem ser gerenciados em Memória e anexos.</p></fieldset></section>
+   <section className="ap-panel"><div className="ap-panel-heading"><span className="ap-step">02</span><div><h3>Imagem ou vídeo de fundo</h3><p>{backgroundInherited?'Esta aba acompanha o fundo geral.':'Escolha um arquivo ou cole um endereço.'}</p></div></div><fieldset disabled={busy||backgroundInherited} className="ap-media-fields"><input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/avif,video/mp4,video/webm" className="ap-file-input" aria-label="Escolher imagem ou vídeo de fundo" onChange={chooseFile}/><button type="button" className="ap-upload" onClick={()=>fileRef.current?.click()}><AdminSectorIcon name="UploadCloud" className="ad-icon"/><strong>Escolher imagem ou vídeo</strong><span>JPG, PNG, WebP, AVIF, MP4 ou WebM · até 4 MB</span></button>{resolved.background.kind!=='none'&&<div className="ap-selected-media"><AdminSectorIcon name={resolved.background.kind==='video'?'Video':'Image'} className="ad-icon"/><div><strong>{resolved.background.name||'Fundo selecionado'}</strong><small>{files[target]?'Arquivo pronto para enviar ao salvar':resolved.background.kind==='video'?'Vídeo sem som, em repetição':'Imagem original · sem compressão'}</small></div><button type="button" className="ap-remove" onClick={()=>{forgetFile(target);setUrlInput('');edit(replaceEntry(draft,target,{background:{kind:'none',url:'',name:'',size:0}}));}}>Remover</button></div>}<div className="ap-divider"><span>ou use um endereço</span></div><div className="ap-url-row"><label className="ap-field">Tipo<select value={kindInput} onChange={event=>setKindInput(event.target.value)}><option value="image">Imagem</option><option value="video">Vídeo</option></select></label><label className="ap-field ap-url-field">Endereço do fundo<input type="url" value={urlInput} placeholder="https://…" onChange={event=>setUrlInput(event.target.value)}/></label></div><button className="ap-button ap-secondary" type="button" disabled={!urlInput.trim()} onClick={()=>{try{edit(applyUrl());}catch(failure){setError(failure.message);}}}>Pré-visualizar endereço</button><p className="ap-help">As imagens são enviadas no tamanho original, sem compressão. Imagens pequenas não são ampliadas; o fundo preto e azul completa as bordas. Para arquivos acima de 4 MB, use o endereço do original. Ao salvar a troca ou remoção, o arquivo anterior é excluído automaticamente do R2 quando deixa de ser usado em toda a plataforma.</p></fieldset></section>
    <section className="ap-panel"><div className="ap-panel-heading"><span className="ap-step">03</span><div><h3>Nível de transparência</h3><p>Arraste a barra e veja a mudança na hora.</p></div><output htmlFor="ap-transparency">{resolved.transparency}%</output></div><label className="ap-range-label" htmlFor="ap-transparency">Transparência dos painéis</label><input id="ap-transparency" className="ap-range" type="range" min="0" max="100" step="1" value={resolved.transparency} aria-valuetext={resolved.transparency+'% de transparência'} disabled={busy||transparencyInherited} style={{'--ap-progress':resolved.transparency+'%'}} onChange={event=>edit(replaceEntry(draft,target,{transparency:Number(event.target.value)}))}/><div className="ap-range-ends"><span>0% · sólido</span><span>100% · mais transparente</span></div>{transparencyInherited&&<p className="ap-help">Desmarque “Usar a transparência geral” para ajustar somente esta aba.</p>}</section>
   </div><aside className="ap-preview-panel"><p className="ap-preview-eyebrow">Prévia ao vivo</p><h3>{previewLabel}</h3><div className={'ap-preview-frame'+(resolved.enabled?' ap-preview-glass':'')} style={adminAppearanceVariables(resolved)}><AdminWallpaper key={resolved.background.kind+resolved.background.url} appearance={resolved} mini onMediaError={()=>setMediaError(true)}/><div className="ap-preview-rail"><span>◫</span><span className="ap-mini-active">◉</span><span>▤</span><span>◷</span><span>⚙</span></div><div className="ap-preview-content"><div className="ap-mini-top"><span>Seu painel</span><i/></div><strong>Bem-vindo ao painel</strong><span>Visualização da aparência</span><div className="ap-mini-grid"><div><small>Cursos</small><b>12</b><i/></div><div><small>Alunos</small><b>248</b><i/></div></div><div className="ap-mini-chart"><small>Atividade da plataforma</small><svg viewBox="0 0 260 80" fill="none" aria-hidden="true"><path d="M0 68 C25 68 28 22 55 39 S84 70 112 36 S143 44 171 20 S202 48 225 18 S250 15 260 5" stroke="#60a5fa" strokeWidth="3"/></svg></div></div></div><div className="ap-preview-caption"><span className="ap-live-dot"/>As alterações aparecem no painel antes de salvar.</div><div className="ap-preview-summary"><span>Fundo</span><b>{resolved.background.kind==='video'?'Vídeo':resolved.background.kind==='image'?'Imagem':'Preto e azul'}</b><span>Transparência</span><b>{resolved.transparency}%</b><span>Aplicação</span><b>{isGlobal?'Geral':'Individual'}</b></div><p className="ap-help">O menu lateral e as animações do dashboard continuam como antes.</p></aside></div>
   <div className="ap-savebar"><div><strong>{dirty?'Alterações não salvas':'Aparência atual'}</strong><span>{busy?status||'Salvando…':status||'Salve para manter o visual nos próximos acessos.'}</span></div><div><button type="button" className="ap-button ap-secondary" disabled={busy||!dirty} onClick={discard}>Descartar</button><button type="button" className="ap-button ap-primary" disabled={busy} onClick={save}><AdminSectorIcon name="Save" className="ad-icon"/>{busy?'Salvando…':'Salvar aparência'}</button></div></div>{busy&&<progress className="ap-save-progress" aria-label="Salvando a aparência"/>}{(error||mediaError)&&<p className="ap-error" role="alert">{error||'Não foi possível abrir esse fundo. Confira se o link é direto e público ou escolha outro arquivo.'}</p>}{status&&!busy&&!error&&<p className="ap-notice" role="status">{status}</p>}
@@ -18464,22 +18540,23 @@ const adminAppearanceCss = `
 .admin-workspace.ad-appearance{position:relative;isolation:isolate}
 .ad-appearance>.ad-main{background:transparent}
 .ad-wallpaper{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:radial-gradient(ellipse at 9% 33%,#123651 0,transparent 54%),radial-gradient(ellipse at 86% 77%,#102b48 0,transparent 48%),#020406}
-.ad-wallpaper>img,.ad-wallpaper>video{position:absolute;width:100%;height:100%;inset:0;object-fit:cover;object-position:center;animation:ad-wallpaper-arrive .3s ease-out}
+.ad-wallpaper>img,.ad-wallpaper>video{position:absolute;width:100%;height:100%;inset:0;object-fit:cover;object-position:center;image-rendering:auto;filter:none;animation:ad-wallpaper-arrive .3s ease-out}
+.ad-wallpaper>img{inset:auto;left:50%;top:50%;transform:translate(-50%,-50%)}
 .ad-wallpaper-shade{position:absolute;inset:0;background:linear-gradient(180deg,#0005,#0004 48%,#0008)}
-.ad-wallpaper-action{position:fixed;right:24px;bottom:17px;z-index:45;display:flex;align-items:center;gap:7px;font:500 10px Inter,system-ui,sans-serif;padding:8px 11px;border:1px solid #ffffff26;border-radius:20px;background:#080d18ce;color:#dce8fa;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);cursor:pointer;box-shadow:0 4px 18px #0004}
+.ad-wallpaper-action{position:fixed;right:24px;bottom:17px;z-index:45;display:flex;align-items:center;gap:7px;font:500 10px Inter,system-ui,sans-serif;padding:8px 11px;border:1px solid #ffffff26;border-radius:20px;background:#080d18ce;color:#dce8fa;backdrop-filter:none;-webkit-backdrop-filter:none;cursor:pointer;box-shadow:0 4px 18px #0004}
 .ad-wallpaper-action .ad-icon{width:13px;height:13px}
 .ad-appearance.ad-glass{--ad-panel:rgba(11,13,17,var(--ad-glass-alpha,.55));--ad-soft:rgba(23,25,30,var(--ad-glass-soft,.67));--ad-highlight:rgba(13,35,69,var(--ad-glass-soft,.67));--ad-line:#ffffff20}
-.ad-glass .ad-sidebar.ad-rail,.ad-glass .ad-topbar,.ad-glass .ad-stat,.ad-glass .ad-sector-card,.ad-glass .ad-group-panel,.ad-glass .ad-mini-panel,.ad-glass .ap-panel,.ad-glass .ap-preview-panel,.ad-glass .ap-savebar{background:rgba(9,12,17,var(--ad-glass-alpha,.55));backdrop-filter:blur(18px) saturate(115%);-webkit-backdrop-filter:blur(18px) saturate(115%);border-color:#ffffff22;box-shadow:0 8px 32px #00000026,inset 0 1px 0 #ffffff04}
+.ad-glass .ad-sidebar.ad-rail,.ad-glass .ad-topbar,.ad-glass .ad-stat,.ad-glass .ad-sector-card,.ad-glass .ad-group-panel,.ad-glass .ad-mini-panel,.ad-glass .ap-panel,.ad-glass .ap-preview-panel,.ad-glass .ap-savebar{background:rgba(9,12,17,var(--ad-glass-alpha,.55));backdrop-filter:none;-webkit-backdrop-filter:none;border-color:#ffffff22;box-shadow:0 8px 32px #00000026,inset 0 1px 0 #ffffff04}
 .ad-glass .ad-sidebar.ad-rail{background:rgba(5,8,12,var(--ad-glass-alpha,.55));border-color:#ffffff25}
 .ad-glass .ad-topbar{background:rgba(5,8,12,var(--ad-glass-soft,.67))}
-.ad-glass .ad-rail .ad-rail-toggle{background:rgba(12,18,28,var(--ad-glass-soft,.67));backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-color:#ffffff30}
+.ad-glass .ad-rail .ad-rail-toggle{background:rgba(12,18,28,var(--ad-glass-soft,.67));backdrop-filter:none;-webkit-backdrop-filter:none;border-color:#ffffff30}
 .ad-glass .ad-rail .ad-brand-mark,.ad-glass .ad-rail .ad-avatar{background:#ffffff0a;border-color:#ffffff18}
 .ad-glass .ad-rail .ad-rail-divider,.ad-glass .ad-profile{border-color:#ffffff20}
-.ad-glass .ad-search-trigger,.ad-glass .ad-tool-select select{background:#07111d80;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#0f0f0f]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#0b0b0b]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#111]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#111111]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#0a0a0a]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#050505]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#000]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#000000]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#1a1a1a]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#121212]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-slate-900"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-slate-800"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class~="bg-black"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class~="bg-white"]{background-color:rgba(9,12,17,var(--ad-glass-alpha,.55))!important;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-color:#ffffff20}
+.ad-glass .ad-search-trigger,.ad-glass .ad-tool-select select{background:#07111d80;backdrop-filter:none;-webkit-backdrop-filter:blur(12px)}
+.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#0f0f0f]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#0b0b0b]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#111]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#111111]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#0a0a0a]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#050505]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#000]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#000000]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#1a1a1a]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-[#121212]"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-slate-900"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class*="bg-slate-800"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class~="bg-black"],.ad-glass .ad-page :where(div,section,article,aside,header,form)[class~="bg-white"]{background-color:rgba(9,12,17,var(--ad-glass-alpha,.55))!important;backdrop-filter:none;-webkit-backdrop-filter:none;border-color:#ffffff20}
 .ad-glass .ad-dashboard [class*="bg-gradient-to-b"]{background-image:none!important}
 .ad-glass .ad-content :is(.text-slate-800,.text-slate-900){color:#e8edf5}
-.ad-glass .platform-general-nav{background:rgba(9,13,20,var(--ad-glass-soft,.67))!important;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-color:#ffffff25!important}
+.ad-glass .platform-general-nav{background:rgba(9,13,20,var(--ad-glass-soft,.67))!important;backdrop-filter:none;-webkit-backdrop-filter:none;border-color:#ffffff25!important}
 .ap-settings{color:var(--ad-text);font:14px/1.6 Inter,system-ui,sans-serif;margin-top:22px;min-width:0}
 .ap-intro{display:flex;align-items:flex-start;justify-content:space-between;gap:25px;margin:12px 0 25px}
 .ap-intro h2{font-size:27px;line-height:1.2;letter-spacing:-.8px;font-weight:600;margin:0 0 10px}
@@ -18557,7 +18634,7 @@ const adminAppearanceCss = `
 .ap-mini-grid i{display:block;width:55%;height:3px;border-radius:4px;background:#60a5fa66;margin-top:4px}
 .ap-mini-chart{flex:1;min-height:85px}
 .ap-mini-chart svg{display:block;width:100%;height:auto;margin-top:12px}
-.ap-preview-glass .ap-preview-rail,.ap-preview-glass .ap-mini-grid>div,.ap-preview-glass .ap-mini-chart{background:rgba(8,11,17,var(--ad-glass-alpha,.55));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.ap-preview-glass .ap-preview-rail,.ap-preview-glass .ap-mini-grid>div,.ap-preview-glass .ap-mini-chart{background:rgba(8,11,17,var(--ad-glass-alpha,.55));backdrop-filter:none;-webkit-backdrop-filter:blur(12px)}
 .ap-preview-caption{display:flex;align-items:flex-start;gap:8px;font-size:9px;color:#a5b8d3;margin-top:16px;line-height:1.6}
 .ap-live-dot{height:5px;width:5px;flex-shrink:0;background:#60a5fa;border-radius:50%;margin-top:5px;box-shadow:0 0 10px #60a5fa80}
 .ap-preview-summary{display:grid;grid-template-columns:1fr auto;gap:9px;font-size:10px;margin-top:20px;border-top:1px solid #ffffff1a;padding-top:17px}
@@ -18728,7 +18805,7 @@ const [editingCertificate, setEditingCertificate] = useState(null);
 
             // --- DELETAR (Limpeza) ---
 
-            const deleteFromCustomDrive = async(fileUrl)=>{if(fileUrl)await platformStorageRequest('/queue-url',{method:'POST',body:{url:fileUrl},settings:generalSettings});};
+            const deleteFromCustomDrive = async(fileUrl)=>{if(fileUrl){await platformStorageRequest('/queue-url',{method:'POST',body:{url:fileUrl},settings:generalSettings});window.dispatchEvent(new CustomEvent('platform:storage-cleanup-needed',{detail:{uid:auth.currentUser?.uid}}));}};
 
            // --- NOVO: ESTADOS DO CHAT DE SUPORTE ---
             const [supportChats, setSupportChats] = useState([]);
@@ -27286,7 +27363,7 @@ case 'acelerador':
 
             return (
 
-                <div className={"admin-workspace ad-appearance"+(isDarkMode?" ad-dark":"")+(currentAdminAppearance.enabled?" ad-glass":"")} style={adminAppearanceVariables(currentAdminAppearance)}><style>{adminSectorCss+adminAppearanceCss}</style><AdminWallpaper key={currentAdminAppearance.background.kind+currentAdminAppearance.background.url} appearance={currentAdminAppearance}/>
+                <div className={"admin-workspace ad-appearance"+(isDarkMode?" ad-dark":"")+(currentAdminAppearance.enabled?" ad-glass":"")} style={adminAppearanceVariables(currentAdminAppearance)}><style>{adminSectorCss+adminAppearanceCss}</style><AdminWallpaper key={currentAdminAppearance.background.kind+currentAdminAppearance.background.url} appearance={currentAdminAppearance}/><PlatformStorageAutoCleanup uid={auth.currentUser?.uid} enabled={userRole==='admin'} settings={generalSettings}/>
 
                     
 
